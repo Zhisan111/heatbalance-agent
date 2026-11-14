@@ -79,7 +79,7 @@ assumptions:
     rationale: >
       S1 gives no exhaust enthalpy. 0.75 gives a used-energy end point of
       about 2348 kJ/kg and an overall LP efficiency of about 0.88, typical
-      for this class. Engineering judgement; sensitivity about 0.09 % heat
+      for this class. Engineering judgement; sensitivity about 0.11 % heat
       rate per 0.01.
   A4:
     item: Extraction line pressure loss
@@ -149,6 +149,17 @@ assumptions:
     item: Heat rate definition
     choice: Gross turbine heat rate = (main steam heat + reheat heat) / generator terminal output.
     rationale: Usual definition for a unit with steam-driven feed pump; boiler efficiency and auxiliary power are excluded.
+  A16:
+    item: Calibration reference
+    choice: >
+      The reference for power and heat rate is an independent classical
+      series heat balance (plants/sub300/handcalc.py, CoolProp only) on the
+      same parameters; tolerance 0.5 %.
+    rationale: >
+      No verifiable public design heat rate belonging to S1 was found. The
+      comparison proves that the TESPy network implements the intended
+      topology and specifications; it does not prove agreement with a real
+      unit. Replace by published design values once a verified source exists.
 
 parameters:
   rating:
@@ -216,6 +227,11 @@ parameters:
       extraction: IP2
       line_pr: {value: 0.95, unit: "-", ref: A4}
       eta_s: {value: 0.80, unit: "-", ref: A8}
+
+calibration:
+  reference: plants/sub300/handcalc.py
+  tolerance_power: {value: 0.005, unit: "-", ref: A16}
+  tolerance_heat_rate: {value: 0.005, unit: "-", ref: A16}
 
 # Public order-of-magnitude figures used by plausibility tests only (never
 # as model inputs).

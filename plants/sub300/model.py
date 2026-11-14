@@ -12,6 +12,8 @@ Public interface
 - :func:`solve` runs the design calculation and checks convergence.
 - :func:`summarize` returns a plain, JSON-serialisable result dictionary.
 - :func:`run` chains the three steps.
+- :func:`with_fixed_efficiencies` turns the design parameters into a
+  predictive parameter set for what-if studies.
 
 Units (network and all dictionaries): pressure MPa, temperature degC,
 enthalpy kJ/kg, mass flow kg/s, power and heat MW.
@@ -615,6 +617,24 @@ def summarize(network: Network) -> dict:
         "states": states,
         "power": power,
     }
+
+
+def with_fixed_efficiencies(params: dict, summary: dict) -> dict:
+    """Return a copy of ``params`` with section efficiencies instead of
+    outlet enthalpies.
+
+    The design data define the expansion line by extraction enthalpies, so
+    the section efficiencies are results. For what-if studies derived from
+    the design point (other pressures, temperatures or flows) the expansion
+    line must be allowed to move: this helper freezes the efficiencies found
+    in ``summary`` and drops the fixed outlet enthalpies.
+    """
+    p = copy.deepcopy(params)
+    eta = {s["label"]: s["eta_s"] for s in summary["turbine"]["sections"]}
+    for sec in p["turbine"]["sections"]:
+        sec.pop("h_out", None)
+        sec["eta_s"] = eta[sec["label"]]
+    return p
 
 
 def run(params: dict | None = None) -> tuple[Network, dict]:

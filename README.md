@@ -1,2 +1,221 @@
-# plantkit
-Agent-ready thermal power plant heat balance models (TESPy + MCP) with automatic conservation checks
+# heatbalance-agent
+
+Agent-ready thermal power plant heat balance models (TESPy) with automatic
+conservation and plausibility checks.
+
+面向 AI agent 的电厂热平衡模型（TESPy），带自动守恒与合理性校核。
+
+[English](#english) | [中文](#中文)
+
+---
+
+## English
+
+### Goal
+
+Let an AI agent build, modify and solve power plant heat balance models
+reliably. The agent does not write equations from scratch: it derives new
+models from a **validated reference plant**, and an **automatic check layer**
+reports conservation and plausibility problems back to it.
+
+### Current stage: 1 of N - the reference plant
+
+This stage only lays the foundation:
+
+- `plants/sub300/` - design-point (THA) model of a typical 300 MW
+  subcritical, single-reheat unit with eight extractions (3 HP heaters,
+  deaerator, 4 LP heaters) and a turbine-driven feed pump
+- `checks/balance.py` - mass and energy residuals of the system and of
+  every component
+- `checks/ranges.py` - engineering plausibility ranges that return
+  structured issues (problem, location, value, expected range, hint)
+
+Not in this stage: off-design operation, an MCP server, further plants, a UI.
+
+### Run
+
+```bash
+pip install -e ".[dev]"
+```
+
+```bash
+python -m plants.sub300.model
+```
+
+```bash
+pytest
+```
+
+```python
+from plants.sub300 import model
+from checks.balance import check_balance
+from checks.ranges import check_ranges
+
+params = model.load_params()            # plain dict from design_data.yaml
+network = model.solve(model.build_model(params))
+summary = model.summarize(network)      # JSON-serialisable results
+
+check_balance(network)["issues"]        # [] when mass and energy are conserved
+check_ranges(summary)                   # list of Issue records
+```
+
+Requires Python 3.11+. TESPy is pinned to 0.12.0.post1 and CoolProp to 8.0.0
+because TESPy's API changes between minor releases.
+
+### Design-point results
+
+| Quantity | Value |
+|---|---|
+| Gross power (generator terminals) | 300.0 MW (specified) |
+| Gross turbine heat rate | 7908.1 kJ/kWh |
+| Main steam | 16.7 MPa / 538 degC, 900.1 t/h |
+| Reheat steam | 3.249 MPa / 538 degC, 760.0 t/h |
+| Final feedwater temperature | 274.8 degC |
+| Cylinder efficiencies HP / IP / LP | 88.6 % / 91.9 % / 88.2 % |
+| Condenser | 4.9 kPa, 352.4 MW |
+| Feed pump turbine | 33.9 t/h steam, 6.66 MW |
+
+Calibration: power and heat rate agree with the reference to better than
+1e-8 (limit 0.5 %). **The reference is an independent classical heat
+balance on the same typical parameters** (`plants/sub300/handcalc.py`,
+CoolProp only), not published design data. The agreement shows that the
+TESPy network implements the intended topology; it does not show agreement
+with a real unit.
+
+The range check reports no errors and one explained warning: section HP2
+has an isentropic efficiency of 0.970 because the first extraction point of
+the data set splits the HP expansion unevenly (HP1 0.835); the HP cylinder
+as a whole is plausible.
+
+### Data sources and disclaimer
+
+**sub300 is a typical reference unit. It does not represent any real power
+plant and must not be used as design or guarantee data.**
+
+- Only public sources are used; nothing comes from plant-internal or
+  confidential documents.
+- No complete, verifiable public THA heat balance was found. The extraction
+  pressures and enthalpies come from a secondhand source (a course-design
+  document quoting an N300-16.7/538/538 table) that could only be read
+  through a search-engine excerpt; they are treated as typical values.
+- Every number in `plants/sub300/design_data.yaml` points to a public source
+  (`references`, S1-S5) or to an explicit engineering assumption
+  (`assumptions`, A1-A16). A test enforces this.
+
+Main assumptions (full list with rationale in `design_data.yaml`):
+
+| | Assumption | Effect on heat rate |
+|---|---|---|
+| A3 | last LP section efficiency 0.75 including exhaust loss | 0.11 % per 0.01 |
+| A13 | condenser pressure 4.9 kPa (the source table's own value is unknown) | +0.45 % at 5.39 kPa |
+| A10 | mechanical x generator efficiency 0.990 x 0.987 | 1 : 1 |
+| A5 | heater terminal differences -1.7 / 0 / 0 K (HP), 2.8 K (LP) | about 0.1 % for 2 K on all LP heaters |
+| A6 | drain cooler approach 5.6 K | 0.06 % at 10 K |
+| A4 | extraction line pressure loss 3 % (HP), 5 % (others) | 0.12 % at 5 % / 8 % |
+| A8 | one turbine-driven feed pump, 20.5 MPa, no booster pump | 0.08 % per MPa |
+| A11 | gland and valve stem leakage, blowdown, make-up, spray neglected | estimated 0.2-0.5 %, not modelled |
+
+Known limitations:
+
+- With the design data the expansion line is fixed by the extraction
+  enthalpies, so section efficiencies are results. For what-if studies use
+  `model.with_fixed_efficiencies(params, summary)` first.
+- Heaters are lumped (one energy balance with upper and lower terminal
+  difference); desuperheating, condensing and drain cooling zones are not
+  resolved.
+- Only a turbine-driven feed pump is implemented (`feed_pump.drive`).
+
+### License
+
+MIT
+
+---
+
+## 中文
+
+### 项目目标
+
+让 AI agent 能可靠地搭建、修改、求解电厂热平衡模型。agent 不从零写方程，
+而是从**已验证的参考机组**派生，由**自动校核层**把守恒和合理性问题反馈
+给 agent。
+
+### 当前阶段：第 1 阶段——参考机组
+
+本阶段只做地基：
+
+- `plants/sub300/`：典型亚临界 300 MW、一次再热、八级回热（3 高加 +
+  除氧器 + 4 低加）、汽动给水泵机组的设计工况（THA）模型
+- `checks/balance.py`：全系统及每个部件的质量、能量守恒残差
+- `checks/ranges.py`：工程合理范围检查，返回结构化问题清单（问题、位置、
+  实际值、期望范围、排查方向）
+
+本阶段不做：变工况、MCP 服务器、多台机组、界面。
+
+### 如何运行
+
+```bash
+pip install -e ".[dev]"
+```
+
+```bash
+python -m plants.sub300.model
+```
+
+```bash
+pytest
+```
+
+Python 接口见上方英文部分的示例：`load_params` → `build_model` → `solve`
+→ `summarize`，再交给 `check_balance` 和 `check_ranges`。
+
+需要 Python 3.11+。TESPy 锁定 0.12.0.post1，CoolProp 锁定 8.0.0（TESPy
+各小版本之间接口变化较大）。
+
+### 设计工况结果
+
+| 项目 | 数值 |
+|---|---|
+| 发电机端功率 | 300.0 MW（给定） |
+| 汽轮机热耗率 | 7908.1 kJ/kWh |
+| 主蒸汽 | 16.7 MPa / 538 ℃，900.1 t/h |
+| 再热蒸汽 | 3.249 MPa / 538 ℃，760.0 t/h |
+| 给水温度 | 274.8 ℃ |
+| 高 / 中 / 低压缸效率 | 88.6 % / 91.9 % / 88.2 % |
+| 凝汽器 | 4.9 kPa，352.4 MW |
+| 给水泵汽轮机 | 耗汽 33.9 t/h，6.66 MW |
+
+校准：功率、热耗率与参考值偏差小于 1e-8（限值 0.5 %）。**参考值是对同
+一组典型参数做的独立常规热平衡手算**（`plants/sub300/handcalc.py`，只用
+CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模型的拓扑和设定
+实现正确，不说明它与某台真实机组吻合。
+
+合理范围检查无 error，有一条已解释的 warning：HP2 段等熵效率 0.970，原
+因是数据中一段抽汽点把高压缸膨胀线分得不均（HP1 段 0.835），高压缸整体
+效率正常。
+
+### 数据来源与免责声明
+
+**sub300 是典型参考机组，不对应任何一台真实电厂，不能当作设计值或保证值
+使用。**
+
+- 只用公开来源，不含任何电厂内部资料或保密数据。
+- 没有找到完整、可核实的公开 THA 热平衡。抽汽压力和焓来自二手来源（引
+  用 N300-16.7/538/538 参数表的课程设计文档），且只读到了搜索引擎摘要，
+  因此按典型值处理。
+- `plants/sub300/design_data.yaml` 里每个数值都指向公开来源（`references`，
+  S1–S5）或明确的工程假设（`assumptions`，A1–A16），有测试强制检查。
+
+主要假设及其对热耗率的影响见上方英文表格，完整清单和理由在
+`design_data.yaml`。
+
+已知局限：
+
+- 设计数据用抽汽焓固定了膨胀线，各段效率是计算结果。做参数变化分析前先
+  调用 `model.with_fixed_efficiencies(params, summary)` 把效率固定下来。
+- 加热器是集总模型（一个能量平衡加上、下端差），不分过热段、凝结段、疏
+  水冷却段。
+- 给水泵目前只实现了汽动泵（`feed_pump.drive`）。
+
+### 许可
+
+MIT
