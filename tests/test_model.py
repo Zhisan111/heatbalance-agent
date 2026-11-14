@@ -61,7 +61,8 @@ def test_higher_back_pressure_raises_heat_rate(params, summary):
 @pytest.mark.parametrize("mutate, message", [
     (lambda p: p["turbine"]["sections"][0].pop("h_out"), "exactly one"),
     (lambda p: p["heaters"][0].update(extraction="XX"), "unknown extraction"),
-    (lambda p: p["feed_pump"].update(drive="motor"), "drive"),
+    (lambda p: p["feed_pump"].update(drive="diesel"), "drive"),
+    (lambda p: p["rating"].update(main_steam_flow=250.0), "exactly one"),
     (lambda p: p["turbine"].update(reheat_after="LP5"), "reheat_after"),
     (lambda p: p["heaters"][4].update(type="surface"), "deaerator"),
 ])

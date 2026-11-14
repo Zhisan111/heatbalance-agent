@@ -24,7 +24,8 @@ This stage only lays the foundation:
 
 - `plants/sub300/` - design-point (THA) model of a typical 300 MW
   subcritical, single-reheat unit with eight extractions (3 HP heaters,
-  deaerator, 4 LP heaters) and a turbine-driven feed pump
+  deaerator, 4 LP heaters) and a turbine-driven feed pump, plus a
+  validation case of the same model code against published design data
 - `checks/balance.py` - mass and energy residuals of the system and of
   every component
 - `checks/ranges.py` - engineering plausibility ranges that return
@@ -87,6 +88,38 @@ has an isentropic efficiency of 0.970 because the first extraction point of
 the data set splits the HP expansion unevenly (HP1 0.835); the HP cylinder
 as a whole is plausible.
 
+### Validation against published design data
+
+The same model code is run on the published 100 % THA design data of a
+different 300 MW subcritical unit with seven heaters (Yang et al., Energies
+2023, 16(9), 3727; `plants/sub300/validation_en16093727.yaml`,
+`plants/sub300/test_validation.py`).
+
+| Quantity | Published | Model | Deviation |
+|---|---|---|---|
+| Gross power at 260.38 kg/s main steam | 300.234 MW | 300.25 MW | +0.01 % (calibrated) |
+| Heat rate (implied by Table 1 of the paper) | 8192.6 kJ/kWh | 8224.0 kJ/kWh | +0.38 % |
+| Reheat steam flow | 217.66 kg/s | 222.98 kg/s | +2.4 % |
+| Extraction RH1 / RH2 | 17.08 / 20.01 kg/s | 17.25 / 20.16 kg/s | +1.0 % / +0.7 % |
+| Extraction RH3 | 8.44 kg/s | 9.87 kg/s | +17 % |
+| Extraction DEA / RH5 / RH6 | 7.48 / 11.01 / 10.51 kg/s | 7.46 / 11.02 / 10.47 kg/s | -0.3 % / +0.1 % / -0.4 % |
+| Extraction RH7 | 11.64 kg/s | 11.64 kg/s | 0 % (calibrated) |
+
+How to read this:
+
+- The paper does not give condenser pressure, exhaust state or heat rate.
+  Two parameters were fitted to one published value each: condenser
+  pressure (14.55 kPa, to the RH7 flow) and last-section efficiency (0.803,
+  to power). The heat rate reference is derived from the published main
+  steam, reheat and feedwater data.
+- The inferred back pressure and the seven-heater layout suggest a direct
+  air-cooled unit with motor-driven feed pump. This is an inference; the
+  paper does not say so.
+- Five extraction flows are genuine predictions and agree within 1 %.
+- RH3 and the reheat flow deviate because the design includes gland and
+  valve stem leakages (5.6 kg/s bypass the reheater) that the model
+  neglects; the paper's own model shows the same effect.
+
 ### Data sources and disclaimer
 
 **sub300 is a typical reference unit. It does not represent any real power
@@ -99,8 +132,12 @@ plant and must not be used as design or guarantee data.**
   document quoting an N300-16.7/538/538 table) that could only be read
   through a search-engine excerpt; they are treated as typical values.
 - Every number in `plants/sub300/design_data.yaml` points to a public source
-  (`references`, S1-S5) or to an explicit engineering assumption
-  (`assumptions`, A1-A16). A test enforces this.
+  (`references`, S1-S6) or to an explicit engineering assumption
+  (`assumptions`, A1-A16). A test enforces this, also for the validation
+  case.
+- Several assumptions are backed by the published unit of the validation
+  case: reheat pressure loss 10 %, HP extraction line loss 3 %, terminal
+  differences 0 / 2.8 K and 5.6 K.
 
 Main assumptions (full list with rationale in `design_data.yaml`):
 
@@ -123,7 +160,10 @@ Known limitations:
 - Heaters are lumped (one energy balance with upper and lower terminal
   difference); desuperheating, condensing and drain cooling zones are not
   resolved.
-- Only a turbine-driven feed pump is implemented (`feed_pump.drive`).
+- `feed_pump.drive` is `turbine` or `motor`; a booster pump is not
+  modelled.
+- Gland and valve stem leakages are not modelled. The validation case shows
+  the size of the effect: about +2.4 % reheat flow and +0.4 % heat rate.
 
 ### License
 
@@ -144,7 +184,8 @@ MIT
 本阶段只做地基：
 
 - `plants/sub300/`：典型亚临界 300 MW、一次再热、八级回热（3 高加 +
-  除氧器 + 4 低加）、汽动给水泵机组的设计工况（THA）模型
+  除氧器 + 4 低加）、汽动给水泵机组的设计工况（THA）模型，外加一个用
+  公开设计数据检验同一套模型代码的验证算例
 - `checks/balance.py`：全系统及每个部件的质量、能量守恒残差
 - `checks/ranges.py`：工程合理范围检查，返回结构化问题清单（问题、位置、
   实际值、期望范围、排查方向）
@@ -193,6 +234,25 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
 因是数据中一段抽汽点把高压缸膨胀线分得不均（HP1 段 0.835），高压缸整体
 效率正常。
 
+### 用公开设计数据验证
+
+同一套模型代码在另一台 300 MW 亚临界机组（7 台加热器）的公开 100 % THA
+设计数据上运行（Yang 等，Energies 2023, 16(9), 3727；
+`plants/sub300/validation_en16093727.yaml`、
+`plants/sub300/test_validation.py`）。对比结果见上方英文表格，要点：
+
+- 功率偏差 +0.01 %（标定量），热耗率 8224.0 对 8192.6 kJ/kWh，偏差
+  +0.38 %。
+- 论文没有给出背压、排汽参数和热耗率。有两个参数各用一个公开数值标定：
+  背压（14.55 kPa，对 RH7 抽汽量）和末级段效率（0.803，对功率）。热耗
+  率参考值由论文的主汽、再热、给水数据算出。
+- 反推的背压和 7 级回热布置指向直接空冷、电动给水泵机组。这是推断，论
+  文没有明说。
+- 5 段抽汽量是真正的预测值，偏差都在 1 % 以内。
+- RH3 抽汽量偏差 +17 %、再热流量偏差 +2.4 %，原因是设计值含轴封和门杆
+  漏汽（有 5.6 kg/s 不经过再热器），模型没有建；论文自己的模型也有同样
+  的偏差。
+
 ### 数据来源与免责声明
 
 **sub300 是典型参考机组，不对应任何一台真实电厂，不能当作设计值或保证值
@@ -203,7 +263,10 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
   用 N300-16.7/538/538 参数表的课程设计文档），且只读到了搜索引擎摘要，
   因此按典型值处理。
 - `plants/sub300/design_data.yaml` 里每个数值都指向公开来源（`references`，
-  S1–S5）或明确的工程假设（`assumptions`，A1–A16），有测试强制检查。
+  S1–S6）或明确的工程假设（`assumptions`，A1–A16），有测试强制检查，验
+  证算例的数据文件同样检查。
+- 验证算例的公开机组印证了几条假设：再热压损 10 %、高加抽汽管压损 3 %、
+  端差 0 / 2.8 K 和 5.6 K。
 
 主要假设及其对热耗率的影响见上方英文表格，完整清单和理由在
 `design_data.yaml`。
@@ -214,7 +277,10 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
   调用 `model.with_fixed_efficiencies(params, summary)` 把效率固定下来。
 - 加热器是集总模型（一个能量平衡加上、下端差），不分过热段、凝结段、疏
   水冷却段。
-- 给水泵目前只实现了汽动泵（`feed_pump.drive`）。
+- `feed_pump.drive` 可选 `turbine`（汽动）或 `motor`（电动）；前置泵没
+  有建。
+- 没有建轴封和门杆漏汽。验证算例给出了影响的大小：再热流量约 +2.4 %，
+  热耗率约 +0.4 %。
 
 ### 许可
 

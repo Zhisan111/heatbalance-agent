@@ -64,8 +64,9 @@ def hand_calc(params: dict) -> dict:
     Returns
     -------
     dict
-        ``heat_rate`` (kJ/kWh), ``main_steam_flow`` (kg/s) at rated gross
-        power, ``specific_power`` (MW per kg/s main steam at generator
+        ``heat_rate`` (kJ/kWh), ``main_steam_flow`` (kg/s) and
+        ``gross_power`` (MW; one is given by ``rating``, the other follows),
+        ``specific_power`` (MW per kg/s main steam at generator
         terminals), ``extraction_fractions`` by heater label,
         ``bfpt_fraction``, ``reheat_fraction``, ``feedwater_T`` (degC) and
         ``feedwater_h`` (kJ/kg).
@@ -150,18 +151,21 @@ def hand_calc(params: dict) -> dict:
         alpha[rec["label"]] = a
 
     # ---- feed pump turbine --------------------------------------------------------
-    e = ext[fp["bfpt"]["extraction"]]
-    h_bfpt_out = _expand(
-        e["p_out"] * fp["bfpt"]["line_pr"], e["h_out"], p_cond,
-        fp["bfpt"]["eta_s"]
-    )
-    alpha_bfpt = pump_work / (e["h_out"] - h_bfpt_out)
+    alpha_bfpt = 0.0
+    if fp.get("drive", "turbine") == "turbine":
+        e = ext[fp["bfpt"]["extraction"]]
+        h_bfpt_out = _expand(
+            e["p_out"] * fp["bfpt"]["line_pr"], e["h_out"], p_cond,
+            fp["bfpt"]["eta_s"]
+        )
+        alpha_bfpt = pump_work / (e["h_out"] - h_bfpt_out)
 
     # ---- turbine work -------------------------------------------------------------
     leaving = {s["label"]: 0.0 for s in sections}
     for h in heaters:
         leaving[h["extraction"]] += alpha[h["label"]]
-    leaving[fp["bfpt"]["extraction"]] += alpha_bfpt
+    if alpha_bfpt:
+        leaving[fp["bfpt"]["extraction"]] += alpha_bfpt
     flow = 1.0
     work = 0.0
     reheat_fraction = None
@@ -176,9 +180,14 @@ def hand_calc(params: dict) -> dict:
     heat = (h_main - h_fw) + reheat_fraction * (
         reheat["h_hot"] - reheat["h_cold"]
     )
+    if "main_steam_flow" in p["rating"]:
+        flow_main = p["rating"]["main_steam_flow"]
+    else:
+        flow_main = p["rating"]["gross_power"] / specific_power
     return {
         "heat_rate": heat / (work * eta) * 3600,
-        "main_steam_flow": p["rating"]["gross_power"] / specific_power,
+        "main_steam_flow": flow_main,
+        "gross_power": flow_main * specific_power,
         "specific_power": specific_power,
         "extraction_fractions": alpha,
         "bfpt_fraction": alpha_bfpt,

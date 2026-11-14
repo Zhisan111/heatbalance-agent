@@ -110,8 +110,11 @@ def build_model(params: dict | None = None) -> Network:
       cascade to the previous heater in the list (deaerator or condenser at
       the end of a cascade). The deaerator is a mixing heater with saturated
       outlet, followed by the feed pump.
-    - The feed pump is driven by its own turbine (BFPT) exhausting to the
-      main condenser.
+    - ``feed_pump.drive`` is ``turbine`` (the pump is driven by its own
+      turbine, BFPT, exhausting to the main condenser) or ``motor`` (pump
+      power is an external input and is not deducted from gross output).
+    - ``rating`` holds either ``gross_power`` (main steam flow is a result)
+      or ``main_steam_flow`` (gross power is a result).
 
     Parameters
     ----------
@@ -146,7 +149,9 @@ def build_model(params: dict | None = None) -> Network:
     consumers = {s["label"]: [] for s in sections}
     for h in heaters:
         consumers[h["extraction"]].append(("heater", h["label"]))
-    consumers[fp["bfpt"]["extraction"]].append(("bfpt", "BFPT"))
+    turbine_drive = fp.get("drive", "turbine") == "turbine"
+    if turbine_drive:
+        consumers[fp["bfpt"]["extraction"]].append(("bfpt", "BFPT"))
 
     # ---- steam generator and turbine train --------------------------------
     boiler = SimpleHeatExchanger("boiler")
@@ -161,6 +166,8 @@ def build_model(params: dict | None = None) -> Network:
 
     c = connect(closer, "out1", turbines[sections[0]["label"]], "in1", "main_steam")
     c.set_attr(fluid={FLUID: 1}, p=p["main_steam"]["p"], T=p["main_steam"]["T"])
+    if "main_steam_flow" in p["rating"]:
+        c.set_attr(m=p["rating"]["main_steam_flow"])
 
     for i, sec in enumerate(sections):
         label = sec["label"]
@@ -211,14 +218,15 @@ def build_model(params: dict | None = None) -> Network:
             c.set_attr(**outlet_spec)
 
     # ---- feed pump turbine --------------------------------------------------
-    bfpt = Turbine("BFPT")
-    bfpt_valve = Valve("BFPT supply line")
-    split, out = steam_supply["BFPT"]
-    connect(split, out, bfpt_valve, "in1", "ext_BFPT")
-    connect(bfpt_valve, "out1", bfpt, "in1", "steam_BFPT")
-    bfpt_valve.set_attr(pr=fp["bfpt"]["line_pr"])
-    bfpt.set_attr(eta_s=fp["bfpt"]["eta_s"])
-    cond_inflows.append((bfpt, "out1", "bfpt_exhaust"))
+    if turbine_drive:
+        bfpt = Turbine("BFPT")
+        bfpt_valve = Valve("BFPT supply line")
+        split, out = steam_supply["BFPT"]
+        connect(split, out, bfpt_valve, "in1", "ext_BFPT")
+        connect(bfpt_valve, "out1", bfpt, "in1", "steam_BFPT")
+        bfpt_valve.set_attr(pr=fp["bfpt"]["line_pr"])
+        bfpt.set_attr(eta_s=fp["bfpt"]["eta_s"])
+        cond_inflows.append((bfpt, "out1", "bfpt_exhaust"))
 
     # ---- feedwater train ------------------------------------------------------
     condenser = Condenser("condenser")
@@ -342,12 +350,14 @@ def build_model(params: dict | None = None) -> Network:
         PowerConnection(shaft, "power_out1", generator, "power_in", label="P_shaft")
     )
     gross = PowerConnection(generator, "power_out", grid, "power", label="P_gross")
-    gross.set_attr(E=p["rating"]["gross_power"])
+    if "gross_power" in p["rating"]:
+        gross.set_attr(E=p["rating"]["gross_power"])
     generator.set_attr(eta=p["turbine"]["eta_mech"] * p["turbine"]["eta_gen"])
     pconns.append(gross)
-    pconns.append(
-        PowerConnection(bfpt, "power", feed_pump, "power", label="P_BFPT")
-    )
+    if turbine_drive:
+        pconns.append(
+            PowerConnection(bfpt, "power", feed_pump, "power", label="P_BFPT")
+        )
     nw.add_conns(*pconns)
 
     nw.plant = {
@@ -360,6 +370,7 @@ def build_model(params: dict | None = None) -> Network:
         ],
         "feedwater": feedwater_label,
         "exhaust": "lp_exhaust",
+        "feed_pump_drive": "turbine" if turbine_drive else "motor",
     }
     return nw
 
@@ -387,12 +398,17 @@ def _validate(p: dict) -> None:
             raise ModelError(
                 f"heater {h['label']}: unknown extraction {h['extraction']}"
             )
-    if p["feed_pump"].get("drive", "turbine") != "turbine":
-        raise ModelError(
-            "only feed_pump.drive = 'turbine' is implemented in this stage"
-        )
-    if p["feed_pump"]["bfpt"]["extraction"] not in sections:
+    drive = p["feed_pump"].get("drive", "turbine")
+    if drive not in ("turbine", "motor"):
+        raise ModelError("feed_pump.drive must be 'turbine' or 'motor'")
+    if drive == "turbine" and (
+        p["feed_pump"]["bfpt"]["extraction"] not in sections
+    ):
         raise ModelError("feed_pump.bfpt.extraction: unknown section")
+    if ("gross_power" in p["rating"]) == ("main_steam_flow" in p["rating"]):
+        raise ModelError(
+            "rating: give exactly one of gross_power and main_steam_flow"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -563,7 +579,8 @@ def summarize(network: Network) -> dict:
         heaters.append(entry)
     extractions.sort(key=lambda e: e["no"])
 
-    bfpt_in = states["steam_BFPT"]
+    drive = plant["feed_pump_drive"]
+    bfpt_flow = states["steam_BFPT"]["m"] if drive == "turbine" else 0.0
     cw_in, cw_out = states["cw_in"], states["cw_out"]
     cond = comp("condenser")
 
@@ -608,10 +625,10 @@ def summarize(network: Network) -> dict:
         },
         "pumps": {
             "feed_pump_power": float(comp("feed pump").P.val),
-            "feed_pump_drive": "turbine",
-            "bfpt_steam_flow": bfpt_in["m"],
-            "bfpt_steam_fraction": bfpt_in["m"] / main["m"],
-            "bfpt_power": power["P_BFPT"],
+            "feed_pump_drive": drive,
+            "bfpt_steam_flow": bfpt_flow,
+            "bfpt_steam_fraction": bfpt_flow / main["m"],
+            "bfpt_power": power.get("P_BFPT", 0.0),
             "condensate_pump_power": float(comp("condensate pump").P.val),
         },
         "states": states,
@@ -673,8 +690,9 @@ def format_summary(summary: dict) -> str:
     pumps = summary["pumps"]
     lines += [
         "",
-        f"BFPT steam {pumps['bfpt_steam_flow'] * 3.6:.2f} t/h, "
-        f"feed pump power {pumps['feed_pump_power']:.2f} MW",
+        f"Feed pump ({pumps['feed_pump_drive']} driven) "
+        f"{pumps['feed_pump_power']:.2f} MW, "
+        f"BFPT steam {pumps['bfpt_steam_flow'] * 3.6:.2f} t/h",
         f"Condenser duty {summary['condenser']['duty']:.1f} MW, "
         f"cooling water {summary['condenser']['cw_flow'] * 3.6:.0f} t/h",
     ]

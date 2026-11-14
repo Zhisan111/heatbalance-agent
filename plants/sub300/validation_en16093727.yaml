@@ -1,0 +1,172 @@
+# Validation case for the sub300 model code: published design data (100 %
+# THA) of a 300 MW subcritical unit with SEVEN heaters, taken from an open
+# access paper (S6). It is a different unit than sub300 and is used only to
+# test the modelling approach against published numbers.
+#
+# Same conventions as design_data.yaml: MPa, degC, K, kJ/kg, kg/s, MW; every
+# number carries a `ref` to a public source (S*) or an assumption (V*).
+
+meta:
+  name: en16093727
+  title: Published 300 MW subcritical unit with seven heaters, 100 % THA (validation case)
+  schema_version: 1
+
+references:
+  S6:
+    title: >
+      Yang C., Hao X., Zhang Q., Chen H., Yin Z., Jin F. Performance Analysis
+      of a 300 MW Coal-Fired Power Unit during the Transient Processes for
+      Peak Shaving. Energies 2023, 16(9), 3727.
+    type: paper
+    url: https://doi.org/10.3390/en16093727
+    locator: >
+      Figure 1 (flow diagram), Table 1 (main parameters, 100 % THA), Table 2
+      (design data of the heat regeneration system), Table 3 (modelling
+      details: terminal differences, efficiencies), Table 5 (design values)
+    quality: original read (open access, CC BY 4.0)
+
+assumptions:
+  V1:
+    item: Extraction enthalpies
+    choice: h(p, T) from the pressure and temperature of Table 2 (IAPWS-95); HP exhaust from the cold reheat state of Table 1.
+    rationale: The paper lists temperatures, not enthalpies. A test recomputes the values.
+  V2:
+    item: Meaning of the Table 2 pressures
+    choice: >
+      Pressures at the heater shell. Turbine-side extraction pressure =
+      shell pressure / line_pr with line_pr = 0.97 (HP heaters) and 0.95
+      (deaerator and LP heaters).
+    rationale: >
+      Table 1 gives 3.687 MPa at the HP exhaust and Table 2 gives 3.5763 MPa
+      for RH2, a ratio of 0.970. The other ratios are assumed; they affect
+      only the reported section efficiencies, not power or heat rate,
+      because the extraction enthalpies are fixed.
+  V3:
+    item: Heater terminal differences
+    choice: >
+      Upper: 0 K for RH2 and RH3, 2.8 K for RH5-RH7 (Table 3); -1.66 K for
+      RH1 so that the final feedwater temperature equals the design value
+      272.2 degC of Table 1. Lower: 5.6 K (Table 3).
+    rationale: >
+      The "outlet feedwater temperature" row of Table 2 equals the saturation
+      temperature of the listed pressure for every heater (within 0.04 K)
+      and contradicts both Table 1 (272.2 degC) and Table 3, so Table 3 and
+      Table 1 are used. Table 3 states -0.7 K for RH1 in the authors' model.
+  V4:
+    item: Feed pump drive
+    choice: Motor driven; pump power is not deducted from "power generation".
+    rationale: >
+      Figure 1 shows the feed pump without drive turbine. With a
+      turbine-driven pump the published power could only be met with an
+      implausible last-section efficiency of about 0.95 (see V6).
+  V5:
+    item: Condenser pressure (not published)
+    choice: 14.55 kPa, calibrated so that the RH7 extraction flow equals the published 11.64 kg/s.
+    rationale: >
+      At a wet-cooling back pressure of about 5 kPa RH7 would need 17.6 kg/s.
+      The inferred value is typical for a direct air-cooled unit, which also
+      fits the seven-heater layout; the paper does not state the cooling
+      type, so this is an inference. Cooling medium data below are
+      placeholders without effect on the cycle.
+  V6:
+    item: Last LP section (not published)
+    choice: Isentropic efficiency 0.803 including exhaust loss, calibrated so that gross power equals the published 300.234 MW at the published main steam flow.
+    rationale: One free parameter fitted to one published value; the result is plausible for a last stage group.
+  V7:
+    item: Neglected items
+    choice: Gland and valve stem leakage and all other minor flows are neglected; water-side pressure drops follow Table 2.
+    rationale: >
+      Published reheat flow (217.66 kg/s) is 5.6 kg/s lower than main steam
+      minus RH1 and RH2 extraction, i.e. the design includes leakages. The
+      authors' own model neglects them as well.
+  V8:
+    item: Cylinder boundaries
+    choice: IP cylinder ends at the RH5 extraction, LP cylinder starts there.
+    rationale: Figure 1 draws three extractions on the IP turbine and two on the LP turbine. Affects reported cylinder efficiencies only.
+  V9:
+    item: Published heat rate
+    choice: >
+      Not stated in the paper. Derived in the tests from Table 1 as
+      (main steam flow x (h_main - h_feedwater) + reheat flow x (h_hot -
+      h_cold)) / power = 8192.6 kJ/kWh.
+    rationale: All quantities of the definition are published design values.
+
+parameters:
+  rating:
+    main_steam_flow: {value: 260.38, unit: kg/s, ref: S6}
+
+  main_steam:
+    p: {value: 16.67, unit: MPa, ref: S6}
+    T: {value: 538.0, unit: degC, ref: S6}
+
+  reheat:
+    T: {value: 538.0, unit: degC, ref: S6}
+    # 3.318 MPa / 3.687 MPa (Table 1)
+    pr: {value: 0.89992, unit: "-", ref: S6}
+
+  turbine:
+    eta_mech: {value: 0.998, unit: "-", ref: S6}
+    eta_gen: {value: 0.9895, unit: "-", ref: S6}
+    reheat_after: HP2
+    sections:
+      - {label: HP1, cylinder: HP, p_out: 5.72144,  h_out: 3140.0, ref: [S6, V1, V2]}
+      - {label: HP2, cylinder: HP, p_out: 3.687,    h_out: 3038.8, ref: [S6, V1]}
+      - {label: IP1, cylinder: IP, p_out: 1.76526,  h_out: 3346.7, ref: [S6, V1, V2]}
+      - {label: IP2, cylinder: IP, p_out: 0.954316, h_out: 3173.6, ref: [S6, V1, V2]}
+      - {label: IP3, cylinder: IP, p_out: 0.588421, h_out: 3052.9, ref: [S6, V1, V2, V8]}
+      - {label: LP1, cylinder: LP, p_out: 0.240737, h_out: 2870.8, ref: [S6, V1, V2]}
+      - {label: LP2, cylinder: LP, p_out: 0.082737, h_out: 2680.1, ref: [S6, V1, V2]}
+      - {label: LP3, cylinder: LP, p_out: condenser, eta_s: 0.803, ref: V6}
+
+  heaters:
+    - {label: RH7, type: surface,   extraction: LP2, line_pr: 0.95,    ttd_u: 2.8,   ttd_l: 5.6, dp_water: 0.01, ref: [S6, V2, V3]}
+    - {label: RH6, type: surface,   extraction: LP1, line_pr: 0.95,    ttd_u: 2.8,   ttd_l: 5.6, dp_water: 0.01, ref: [S6, V2, V3]}
+    - {label: RH5, type: surface,   extraction: IP3, line_pr: 0.95,    ttd_u: 2.8,   ttd_l: 5.6, dp_water: 0.00, ref: [S6, V2, V3]}
+    - {label: DEA, type: deaerator, extraction: IP2, line_pr: 0.95,    ref: [S6, V2]}
+    - {label: RH3, type: surface,   extraction: IP1, line_pr: 0.97,    ttd_u: 0.0,   ttd_l: 5.6, dp_water: 0.01, ref: [S6, V2, V3]}
+    - {label: RH2, type: surface,   extraction: HP2, line_pr: 0.96998, ttd_u: 0.0,   ttd_l: 5.6, dp_water: 0.01, ref: [S6, V3]}
+    - {label: RH1, type: surface,   extraction: HP1, line_pr: 0.97,    ttd_u: -1.66, ttd_l: 5.6, dp_water: 0.01, ref: [S6, V2, V3]}
+
+  condenser:
+    p: {value: 0.01455, unit: MPa, ref: V5}
+    cw_T_in: {value: 20.0, unit: degC, ref: V5}
+    cw_p: {value: 0.2, unit: MPa, ref: V5}
+    ttd_u: {value: 4.2, unit: K, ref: V5}
+
+  condensate_pump:
+    p_out: {value: 1.71, unit: MPa, ref: S6}
+    eta_s: {value: 0.83, unit: "-", ref: S6}
+
+  feed_pump:
+    drive: motor
+    p_out: {value: 16.80, unit: MPa, ref: S6}
+    eta_s: {value: 0.83, unit: "-", ref: S6}
+
+# Published design values (100 % THA) the model results are compared with.
+published:
+  gross_power: {value: 300.234, unit: MW, ref: S6}
+  main_steam_flow: {value: 260.38, unit: kg/s, ref: S6}
+  reheat_steam_flow: {value: 217.66, unit: kg/s, ref: S6}
+  cold_reheat_p: {value: 3.687, unit: MPa, ref: S6}
+  cold_reheat_T: {value: 325.3, unit: degC, ref: S6}
+  hot_reheat_p: {value: 3.318, unit: MPa, ref: S6}
+  feedwater_T: {value: 272.2, unit: degC, ref: S6}
+  feedwater_p: {value: 16.77, unit: MPa, ref: S6}
+  # Table 2: extraction steam temperature, pressure and flow per heater
+  heaters:
+    - {label: RH1, T: 381.7, p: 5.5498, m: 17.08, ref: S6}
+    - {label: RH2, T: 325.3, p: 3.5763, m: 20.01, ref: S6}
+    - {label: RH3, T: 443.0, p: 1.7123, m: 8.44,  ref: S6}
+    - {label: DEA, T: 356.4, p: 0.9066, m: 7.48,  ref: S6}
+    - {label: RH5, T: 295.1, p: 0.5590, m: 11.01, ref: S6}
+    - {label: RH6, T: 200.7, p: 0.2287, m: 10.51, ref: S6}
+    - {label: RH7, T: 100.7, p: 0.0786, m: 11.64, ref: S6}
+
+# Acceptance limits of the validation test (relative deviations).
+tolerances:
+  gross_power: {value: 0.005, unit: "-", ref: V6}
+  heat_rate: {value: 0.005, unit: "-", ref: V9}
+  # heaters whose extraction flow is a genuine prediction
+  extraction_flow: {value: 0.015, unit: "-", ref: V7}
+  # reheat flow differs by the neglected leakages
+  reheat_steam_flow: {value: 0.03, unit: "-", ref: V7}

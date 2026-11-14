@@ -60,6 +60,22 @@ references:
     url: https://scdljs.ijournals.cn/scdljs/article/pdf/20150319
     locator: Table 1 (test data before overhaul, 295.0 MW, 975.7 t/h, corrected heat rate 8262.4 kJ/kWh, HP efficiency 83.51 %, IP efficiency 93.01 %)
     quality: test data of a CFB unit, order-of-magnitude reference only
+  S6:
+    title: >
+      Yang C., Hao X., Zhang Q., Chen H., Yin Z., Jin F. Performance Analysis
+      of a 300 MW Coal-Fired Power Unit during the Transient Processes for
+      Peak Shaving. Energies 2023, 16(9), 3727.
+    type: paper
+    url: https://doi.org/10.3390/en16093727
+    locator: >
+      Table 1 (HP exhaust 3.687 MPa, hot reheat 3.318 MPa), Table 2 (RH2
+      3.5763 MPa), Table 3 (terminal differences -0.7 / 0 / 2.8 K upper and
+      5.6 K lower, mechanical efficiency 99.80 %, generator efficiency
+      98.95 %, pump efficiency 83 %)
+    quality: >
+      original read (open access). Different unit (seven heaters); supports
+      several assumptions below and is the published validation case of the
+      model code (validation_en16093727.yaml).
 
 assumptions:
   A1:
@@ -72,7 +88,7 @@ assumptions:
   A2:
     item: Reheat system pressure loss
     choice: Hot reheat pressure at IP inlet = 0.90 x HP exhaust pressure.
-    rationale: Common design allowance (about 10 %) for cold/hot reheat piping plus reheater.
+    rationale: Common design allowance (about 10 %) for cold/hot reheat piping plus reheater. S6 gives 3.318 / 3.687 = 0.900 for a comparable unit.
   A3:
     item: Last LP section (extraction 8 to condenser)
     choice: Isentropic efficiency 0.75 including exhaust (leaving) loss.
@@ -84,7 +100,7 @@ assumptions:
   A4:
     item: Extraction line pressure loss
     choice: 3 % for HP heaters, 5 % for deaerator, LP heaters and BFPT supply.
-    rationale: Common textbook allowances (3-5 % HP, 5-8 % LP).
+    rationale: Common textbook allowances (3-5 % HP, 5-8 % LP). S6 gives 3.5763 / 3.687 = 0.970 for the heater fed from the HP exhaust.
   A5:
     item: Heater upper terminal temperature difference (TTD)
     choice: -1.7 K (H1), 0 K (H2, H3), 2.8 K (H5-H8); referenced to saturation temperature at shell pressure.
@@ -92,11 +108,13 @@ assumptions:
       Typical for imported-technology 300 MW heaters with desuperheating
       zones on the HP heaters. Engineering judgement; gives a final
       feedwater temperature of about 275 degC (S4 reports 273.2 degC for a
-      comparable unit).
+      comparable unit). S6 uses -0.7 / 0 / 0 K and 2.8 K in its model, and
+      its design feedwater temperature implies about -1.7 K for the top
+      heater.
   A6:
     item: Heater drain cooler approach (lower terminal difference)
     choice: 5.6 K for all surface heaters.
-    rationale: Common design value (10 degF) for heaters with integral drain cooling zones.
+    rationale: Common design value (10 degF) for heaters with integral drain cooling zones; S6 uses the same value.
   A7:
     item: Heater water-side pressure drop
     choice: 0.10 MPa per HP heater, 0.05 MPa per LP heater.
@@ -121,7 +139,11 @@ assumptions:
   A10:
     item: Mechanical and generator efficiency
     choice: 0.990 and 0.987.
-    rationale: Typical textbook values for a 300 MW hydrogen-cooled generator set.
+    rationale: >
+      Typical textbook values for a 300 MW hydrogen-cooled generator set.
+      S6 uses 0.998 and 0.9895 in its model, which would lower the heat rate
+      by 1.05 %; the more conservative textbook values are kept because no
+      verified heat rate of this unit class is available to decide.
   A11:
     item: Neglected minor flows and losses
     choice: >
@@ -159,7 +181,8 @@ assumptions:
       No verifiable public design heat rate belonging to S1 was found. The
       comparison proves that the TESPy network implements the intended
       topology and specifications; it does not prove agreement with a real
-      unit. Replace by published design values once a verified source exists.
+      unit. Agreement with published design data is tested separately on a
+      different unit (S6, validation_en16093727.yaml, test_validation.py).
 
 parameters:
   rating:

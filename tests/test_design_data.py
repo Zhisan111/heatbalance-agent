@@ -7,6 +7,17 @@ import pytest
 from plants.sub300 import model
 
 
+FILES = {
+    "design_data.yaml": ["parameters", "calibration", "plausibility"],
+    "validation_en16093727.yaml": ["parameters", "published", "tolerances"],
+}
+BLOCKS = [(name, block) for name, blocks in FILES.items() for block in blocks]
+
+
+def _load(name):
+    return model.load_design_data(model.DATA_FILE.with_name(name))
+
+
 @pytest.fixture(scope="module")
 def data():
     return model.load_design_data()
@@ -34,8 +45,9 @@ def _walk(node, path, inherited, out):
         out.append((path, inherited))
 
 
-@pytest.mark.parametrize("block", ["parameters", "calibration", "plausibility"])
-def test_every_number_has_a_known_reference(data, block):
+@pytest.mark.parametrize("name, block", BLOCKS)
+def test_every_number_has_a_known_reference(name, block):
+    data = _load(name)
     known = set(data["references"]) | set(data["assumptions"])
     found = []
     _walk(data[block], block, [], found)
@@ -46,13 +58,15 @@ def test_every_number_has_a_known_reference(data, block):
         assert not unknown, f"{path} refers to unknown {unknown}"
 
 
-def test_references_are_documented(data):
+@pytest.mark.parametrize("name", FILES)
+def test_references_are_documented(name):
+    data = _load(name)
     for key, ref in data["references"].items():
         assert key.startswith("S")
         for field in ("title", "url", "locator", "quality"):
             assert ref.get(field), f"{key} lacks {field}"
     for key, a in data["assumptions"].items():
-        assert key.startswith("A")
+        assert key[0] in "AV"
         for field in ("item", "choice", "rationale"):
             assert a.get(field), f"{key} lacks {field}"
 
