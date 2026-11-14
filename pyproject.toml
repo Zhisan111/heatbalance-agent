@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "heatbalance-agent"
+version = "0.1.0"
+description = "Agent-ready thermal power plant heat balance models (TESPy) with automatic conservation and plausibility checks"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    # TESPy's API changes between minor releases: keep this pinned and
+    # re-validate the reference plant before bumping it.
+    "tespy==0.12.0.post1",
+    "CoolProp>=7.0,<9",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["plants*", "checks*"]
+
+[tool.setuptools.package-data]
+"plants.sub300" = ["design_data.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "plants"]
+pythonpath = ["."]
