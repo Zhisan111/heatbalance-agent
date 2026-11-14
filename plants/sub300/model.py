@@ -154,6 +154,7 @@ def build_model(params: dict | None = None) -> Network:
 
     # steam nodes that collect flows returning to the condenser
     cond_inflows: list = []  # (component, outlet, label)
+    pending_exhaust_spec = None
     steam_supply: dict = {}  # consumer label -> (splitter, outlet)
 
     c = connect(closer, "out1", turbines[sections[0]["label"]], "in1", "main_steam")
@@ -177,10 +178,7 @@ def build_model(params: dict | None = None) -> Network:
             src, out = turb, "out1"
 
         if is_last:
-            if c is None:
-                cond_inflows.append((src, out, f"{label}_out"))
-            else:
-                cond_inflows.append((src, out, "lp_exhaust"))
+            cond_inflows.append((src, out, "lp_exhaust"))
         elif label == p["turbine"]["reheat_after"]:
             cold = connect(src, out, reheater, "in1", "cold_reheat")
             hot = connect(
@@ -204,10 +202,10 @@ def build_model(params: dict | None = None) -> Network:
         else:
             turb.set_attr(eta_s=sec["eta_s"])
         if c is None:
-            # last section without extraction: specify on the condenser link
+            # last section without extraction: its outlet connection (to the
+            # condenser inlet) is created further down
             pending_exhaust_spec = outlet_spec
         else:
-            pending_exhaust_spec = None
             c.set_attr(**outlet_spec)
 
     # ---- feed pump turbine --------------------------------------------------
@@ -246,6 +244,13 @@ def build_model(params: dict | None = None) -> Network:
                 subcooling=True, pr1=1, dp2=h["dp_water"],
                 ttd_u=h["ttd_u"], ttd_l=h["ttd_l"]
             )
+            # TESPy's Condenser is a lumped model whose upper terminal
+            # difference refers to the saturation temperature and is bounded
+            # at 0 K. A heater with a desuperheating zone may heat the
+            # feedwater above saturation temperature (negative TTD), so the
+            # bound is lifted. The energy balance is not affected.
+            comp.ttd_u.min_val = -float("inf")
+            comp.ttd_min.min_val = -float("inf")
             if gets_drain:
                 mix = Merge(f"{label} shell inlet", num_in=2)
                 connect(mix, "out1", comp, "in1", f"shell_{label}")
@@ -308,9 +313,8 @@ def build_model(params: dict | None = None) -> Network:
     cond_mix = Merge("condenser inlet", num_in=len(cond_inflows))
     for k, (src, out, label) in enumerate(cond_inflows):
         c = connect(src, out, cond_mix, f"in{k + 1}", label)
-        if label in ("lp_exhaust", f"{sections[-1]['label']}_out"):
-            if pending_exhaust_spec is not None:
-                c.set_attr(**pending_exhaust_spec)
+        if label == "lp_exhaust" and pending_exhaust_spec is not None:
+            c.set_attr(**pending_exhaust_spec)
     connect(cond_mix, "out1", condenser, "in1", "condenser_in")
     c = connect(cw_in, "out1", condenser, "in2", "cw_in")
     c.set_attr(
@@ -353,8 +357,7 @@ def build_model(params: dict | None = None) -> Network:
             for h in heaters
         ],
         "feedwater": feedwater_label,
-        "exhaust": "lp_exhaust" if consumers[sections[-1]["label"]]
-        else f"{sections[-1]['label']}_out",
+        "exhaust": "lp_exhaust",
     }
     return nw
 
@@ -406,17 +409,32 @@ def solve(network: Network) -> Network:
 # --------------------------------------------------------------------------
 # results
 # --------------------------------------------------------------------------
+def _quality(p: float, h: float) -> float | None:
+    """Vapour mass fraction, or None outside the two-phase region."""
+    if p * 1e6 >= PropsSI("Pcrit", FLUID):
+        return None
+    h_l = PropsSI("H", "P", p * 1e6, "Q", 0, FLUID) / 1e3
+    h_v = PropsSI("H", "P", p * 1e6, "Q", 1, FLUID) / 1e3
+    x = (h - h_l) / (h_v - h_l)
+    tol = 1e-9
+    if x < -tol or x > 1 + tol:
+        return None
+    return min(max(x, 0.0), 1.0)
+
+
 def _state(c) -> dict:
-    """Plain state dict of a connection in network units."""
-    x = c.x.val
+    """Plain state dict of a connection in network units.
+
+    ``x`` is the vapour mass fraction for saturated and two-phase states and
+    None for subcooled liquid and superheated steam.
+    """
     return {
         "m": float(c.m.val),
         "p": float(c.p.val),
         "T": float(c.T.val),
         "h": float(c.h.val),
         "s": float(c.s.val),
-        # TESPy reports x = -1 outside the two-phase region
-        "x": float(x) if 0 <= x <= 1 else None,
+        "x": _quality(float(c.p.val), float(c.h.val)),
     }
 
 
@@ -567,7 +585,6 @@ def summarize(network: Network) -> dict:
     }
 
     return {
-        "plant": plant["params"].get("name", "sub300"),
         "performance": performance,
         "turbine": {
             "sections": sections,
