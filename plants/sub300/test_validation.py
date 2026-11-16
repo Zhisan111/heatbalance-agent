@@ -7,8 +7,10 @@ What is calibrated and what is predicted
 ----------------------------------------
 Two quantities are not published and were fitted to one published value
 each: condenser pressure (to the RH7 extraction flow) and the efficiency of
-the last LP section (to gross power). Everything else is a prediction:
-the other extraction flows, reheat flow and heat rate.
+the last LP section (to gross power). The two leakage flows follow from
+published mass balances; their routing is assumed (V10). Reheat flow and
+heat rate then agree almost by construction, so the genuine predictions are
+the extraction flows of the other six heaters.
 """
 
 import copy
@@ -32,12 +34,11 @@ EXPECTED_WARNINGS = {
     ("condenser_pressure", "condenser"),
     ("cooling_water_rise", "condenser"),
 }
-# Extraction flows that are predictions, the calibrated one and the one
-# with a known deviation: the design routes leakage steam that the model
-# neglects (V7), most likely into RH3.
+# Extraction flows that are predictions and the calibrated one. RH3 has
+# its own, wider tolerance because it depends on the assumed leakage
+# routing (V10).
 PREDICTED = ["RH1", "RH2", "DEA", "RH5", "RH6"]
 CALIBRATED = "RH7"
-KNOWN_DEVIATION = {"RH3": 0.20}
 
 
 def _h(p, T):
@@ -126,8 +127,23 @@ def test_feedwater_temperature_and_reheat_flow(result, published, tol):
     assert perf["reheat_steam_flow"] == pytest.approx(
         published["reheat_steam_flow"], rel=tol["reheat_steam_flow"]
     )
-    # leakages are neglected, so the model must be on the high side
-    assert perf["reheat_steam_flow"] > published["reheat_steam_flow"]
+
+
+def test_leakage_flows_follow_from_published_mass_balances(case_params, published):
+    table = {h["label"]: h["m"] for h in published["heaters"]}
+    bypass = (
+        published["main_steam_flow"] - table["RH1"] - table["RH2"]
+        - published["reheat_steam_flow"]
+    )
+    into_hp_drains = (
+        published["main_steam_flow"] - published["condensate_flow"]
+        - table["RH1"] - table["RH2"] - table["RH3"] - table["DEA"]
+    )
+    leaks = {lk["label"]: lk for lk in case_params["leakages"]}
+    assert leaks["valve_stem"]["m"] == pytest.approx(into_hp_drains, abs=0.005)
+    assert leaks["valve_stem"]["m"] + leaks["hp_ip_gland"]["m"] == pytest.approx(
+        bypass, abs=0.005
+    )
 
 
 def test_extraction_flows_match_published_design(result, published, tol):
@@ -138,8 +154,9 @@ def test_extraction_flows_match_published_design(result, published, tol):
         assert flows[label] == pytest.approx(
             table[label], rel=tol["extraction_flow"]
         ), label
-    for label, limit in KNOWN_DEVIATION.items():
-        assert abs(flows[label] / table[label] - 1) < limit, label
+    assert flows["RH3"] == pytest.approx(
+        table["RH3"], rel=tol["extraction_flow_rh3"]
+    )
 
 
 def test_conservation_and_ranges(result):
@@ -186,3 +203,26 @@ def test_calibrated_values_are_reproducible(case_params, published):
     assert case_params["turbine"]["sections"][-1]["eta_s"] == pytest.approx(
         eta, abs=0.005
     )
+
+
+def test_effect_of_neglecting_leakages(case_params, published):
+    """Without leakages the heat rate is 0.2-0.5 % high and RH3 is missed.
+
+    The last-section efficiency is refitted to the published power, as it
+    would be if leakages had never been modelled.
+    """
+    plain = copy.deepcopy(case_params)
+    del plain["leakages"]
+
+    def power(eta):
+        plain["turbine"]["sections"][-1]["eta_s"] = eta
+        return hand_calc(plain)["gross_power"]
+
+    brentq(lambda x: power(x) - published["gross_power"], 0.3, 1.0)
+    result = hand_calc(plain)
+    main = dict(case_params["main_steam"], T_reheat=case_params["reheat"]["T"])
+    deviation = result["heat_rate"] / published_heat_rate(published, main) - 1
+    assert 0.002 < deviation < 0.005
+    table = {h["label"]: h["m"] for h in published["heaters"]}
+    rh3 = result["extraction_fractions"]["RH3"] * published["main_steam_flow"]
+    assert rh3 / table["RH3"] - 1 > 0.10

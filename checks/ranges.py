@@ -46,6 +46,9 @@ DEFAULT_LIMITS = {
     "cooling_water_rise": (6.0, 14.0),  # K
     # single extraction flow / main steam flow
     "extraction_fraction": (0.01, 0.10),
+    # single leakage flow and sum of all leakage flows / main steam flow
+    "leakage_fraction": (0.0, 0.03),
+    "leakage_fraction_total": (0.0, 0.04),
     # heater shell pressure / extraction pressure
     "extraction_line_pr": (0.90, 1.00),
     # heaters; upper terminal difference depends on the pressure level
@@ -207,6 +210,34 @@ def check_ranges(summary: dict, limits: dict | None = None) -> list[Issue]:
                 "Check the feedwater temperature rise of the heater and the "
                 "drain routing of the neighbouring heaters.",
             )
+
+    # ---- leakages ---------------------------------------------------------------------
+    leakages = summary.get("leakages", [])
+    for lk in leakages:
+        loc = f"leakage {lk['label']}"
+        check(
+            "leakage_fraction", lk["fraction"], loc, "-", WARNING,
+            "leakage flow is unusual relative to main steam flow",
+            "Valve stem and gland leakages are typically below 2 % of the "
+            "main steam flow each; check the unit of the specified flow.",
+        )
+        if lk["p_destination"] > lk["p_source"] * (1 + 1e-9):
+            issues.append(Issue(
+                check="leakage_pressure",
+                problem="leakage flows towards a higher pressure",
+                location=loc, value=float(lk["p_destination"]),
+                expected=(None, float(lk["p_source"])), unit="MPa",
+                severity=ERROR,
+                hint="The destination must be at a lower pressure than the "
+                "source: check source and destination of this leakage.",
+            ))
+    if leakages:
+        check(
+            "leakage_fraction_total", sum(lk["fraction"] for lk in leakages),
+            "leakages", "-", WARNING,
+            "total leakage flow is unusual relative to main steam flow",
+            "Check for leakages counted twice or given in the wrong unit.",
+        )
 
     # ---- feedwater heaters ----------------------------------------------------------
     heaters = summary["heaters"]

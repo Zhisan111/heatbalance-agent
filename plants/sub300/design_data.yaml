@@ -147,10 +147,11 @@ assumptions:
   A11:
     item: Neglected minor flows and losses
     choice: >
-      Gland seal and valve stem leakage, gland steam condenser, boiler
-      blowdown, make-up water, attemperation spray, heater radiation losses
-      and auxiliary steam are all neglected.
-    rationale: First-version simplification. Expected effect is of the order of 0.2-0.5 % on heat rate and about 1 % on main steam flow.
+      Gland steam condenser, LP gland sealing steam, boiler blowdown, make-up
+      water, attemperation spray, heater radiation losses and auxiliary
+      steam are all neglected. Valve stem and HP gland leakage are modelled
+      (A17).
+    rationale: First-version simplification; these items are small compared with the leakages of A17.
   A12:
     item: Steam generator and main steam line
     choice: >
@@ -183,6 +184,20 @@ assumptions:
       topology and specifications; it does not prove agreement with a real
       unit. Agreement with published design data is tested separately on a
       different unit (S6, validation_en16093727.yaml, test_validation.py).
+  A17:
+    item: Valve stem and gland leakage
+    choice: >
+      Two lumped leakage flows at main steam enthalpy that bypass the HP
+      turbine and the reheater: 0.42 % of main steam flow to the shell of H3
+      (valve stem leak-off) and 1.74 % to the IP inlet (HP-IP gland of a
+      combined HP-IP casing).
+    rationale: >
+      The fractions are derived from the published design data of S6 (mass
+      balances of its Tables 1 and 2: 1.09 and 4.54 of 260.38 kg/s, see
+      validation_en16093727.yaml). Source state and routing are not
+      published and are engineering judgement; S6's published power can only
+      be met with a plausible LP efficiency if the larger flow re-enters the
+      turbine. Effect on heat rate: +0.51 % against no leakage.
 
 parameters:
   rating:
@@ -213,6 +228,14 @@ parameters:
       - {label: LP3, cylinder: LP, p_out: 0.0732, h_out: 2669.2, ref: S1}
       - {label: LP4, cylinder: LP, p_out: 0.0256, h_out: 2517.6, ref: S1}
       - {label: LP5, cylinder: LP, p_out: condenser, eta_s: 0.75, ref: A3}
+
+  # Steam leaving the main steam path other than through extractions.
+  # source: main_steam | hot_reheat | section label (state at its outlet)
+  # destination: heater label (shell) | condenser | section label (inlet)
+  # fraction: of main steam flow (alternatively m in kg/s)
+  leakages:
+    - {label: valve_stem,  source: main_steam, destination: H3,  fraction: 0.0042, ref: [S6, A17]}
+    - {label: hp_ip_gland, source: main_steam, destination: IP1, fraction: 0.0174, ref: [S6, A17]}
 
   # Feedwater heaters in water-flow order (condenser -> boiler).
   # extraction: label of the turbine section whose outlet feeds the heater.

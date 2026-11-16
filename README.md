@@ -68,13 +68,14 @@ because TESPy's API changes between minor releases.
 | Quantity | Value |
 |---|---|
 | Gross power (generator terminals) | 300.0 MW (specified) |
-| Gross turbine heat rate | 7908.1 kJ/kWh |
-| Main steam | 16.7 MPa / 538 degC, 900.1 t/h |
-| Reheat steam | 3.249 MPa / 538 degC, 760.0 t/h |
+| Gross turbine heat rate | 7948.7 kJ/kWh |
+| Main steam | 16.7 MPa / 538 degC, 908.7 t/h |
+| Reheat steam | 3.249 MPa / 538 degC, 747.5 t/h |
 | Final feedwater temperature | 274.8 degC |
-| Cylinder efficiencies HP / IP / LP | 88.6 % / 91.9 % / 88.2 % |
-| Condenser | 4.9 kPa, 352.4 MW |
-| Feed pump turbine | 33.9 t/h steam, 6.66 MW |
+| Cylinder efficiencies HP / IP / LP | 88.6 % / 91.4 % / 88.2 % |
+| Valve stem / HP-IP gland leakage | 3.8 t/h to H3 / 15.8 t/h to the IP inlet |
+| Condenser | 4.9 kPa, 355.8 MW |
+| Feed pump turbine | 34.2 t/h steam, 6.72 MW |
 
 Calibration: power and heat rate agree with the reference to better than
 1e-8 (limit 0.5 %). **The reference is an independent classical heat
@@ -97,28 +98,35 @@ different 300 MW subcritical unit with seven heaters (Yang et al., Energies
 
 | Quantity | Published | Model | Deviation |
 |---|---|---|---|
-| Gross power at 260.38 kg/s main steam | 300.234 MW | 300.25 MW | +0.01 % (calibrated) |
-| Heat rate (implied by Table 1 of the paper) | 8192.6 kJ/kWh | 8224.0 kJ/kWh | +0.38 % |
-| Reheat steam flow | 217.66 kg/s | 222.98 kg/s | +2.4 % |
+| Gross power at 260.38 kg/s main steam | 300.234 MW | 300.23 MW | 0.00 % (calibrated) |
+| Heat rate (implied by Table 1 of the paper) | 8192.6 kJ/kWh | 8190.8 kJ/kWh | -0.02 % |
+| Reheat steam flow | 217.66 kg/s | 217.35 kg/s | -0.14 % |
 | Extraction RH1 / RH2 | 17.08 / 20.01 kg/s | 17.25 / 20.16 kg/s | +1.0 % / +0.7 % |
-| Extraction RH3 | 8.44 kg/s | 9.87 kg/s | +17 % |
-| Extraction DEA / RH5 / RH6 | 7.48 / 11.01 / 10.51 kg/s | 7.46 / 11.02 / 10.47 kg/s | -0.3 % / +0.1 % / -0.4 % |
+| Extraction RH3 | 8.44 kg/s | 8.76 kg/s | +3.8 % |
+| Extraction DEA / RH5 / RH6 | 7.48 / 11.01 / 10.51 kg/s | 7.46 / 11.03 / 10.47 kg/s | -0.3 % / +0.1 % / -0.4 % |
 | Extraction RH7 | 11.64 kg/s | 11.64 kg/s | 0 % (calibrated) |
 
 How to read this:
 
 - The paper does not give condenser pressure, exhaust state or heat rate.
   Two parameters were fitted to one published value each: condenser
-  pressure (14.55 kPa, to the RH7 flow) and last-section efficiency (0.803,
+  pressure (14.55 kPa, to the RH7 flow) and last-section efficiency (0.865,
   to power). The heat rate reference is derived from the published main
   steam, reheat and feedwater data.
+- Two leakage flows follow from the published mass balances without
+  fitting: 5.63 kg/s bypass the reheater, of which 1.09 kg/s enter the HP
+  drain cascade. Their routing (RH3 shell and IP inlet, at main steam
+  enthalpy) is an assumption.
+- With power fitted and the reheat flow fixed by the leakage total, heat
+  rate and reheat flow agree almost by construction. They are not
+  independent evidence.
 - The inferred back pressure and the seven-heater layout suggest a direct
   air-cooled unit with motor-driven feed pump. This is an inference; the
   paper does not say so.
-- Five extraction flows are genuine predictions and agree within 1 %.
-- RH3 and the reheat flow deviate because the design includes gland and
-  valve stem leakages (5.6 kg/s bypass the reheater) that the model
-  neglects; the paper's own model shows the same effect.
+- The genuine predictions are six extraction flows: five agree within 1 %,
+  RH3 within 4 %.
+- Without leakages (and the last-section efficiency refitted) the heat rate
+  is 0.38 % high and RH3 is missed by 17 %; a test keeps this comparison.
 
 ### Data sources and disclaimer
 
@@ -137,7 +145,7 @@ plant and must not be used as design or guarantee data.**
   case.
 - Several assumptions are backed by the published unit of the validation
   case: reheat pressure loss 10 %, HP extraction line loss 3 %, terminal
-  differences 0 / 2.8 K and 5.6 K.
+  differences 0 / 2.8 K and 5.6 K, and the leakage fractions.
 
 Main assumptions (full list with rationale in `design_data.yaml`):
 
@@ -150,7 +158,8 @@ Main assumptions (full list with rationale in `design_data.yaml`):
 | A6 | drain cooler approach 5.6 K | 0.06 % at 10 K |
 | A4 | extraction line pressure loss 3 % (HP), 5 % (others) | 0.12 % at 5 % / 8 % |
 | A8 | one turbine-driven feed pump, 20.5 MPa, no booster pump | 0.08 % per MPa |
-| A11 | gland and valve stem leakage, blowdown, make-up, spray neglected | estimated 0.2-0.5 %, not modelled |
+| A17 | valve stem leakage 0.42 % to H3, HP-IP gland leakage 1.74 % to the IP inlet (fractions from the validation case, routing assumed) | +0.51 % against no leakage |
+| A11 | gland steam condenser, LP gland sealing steam, blowdown, make-up, spray neglected | not quantified |
 
 Known limitations:
 
@@ -162,8 +171,9 @@ Known limitations:
   resolved.
 - `feed_pump.drive` is `turbine` or `motor`; a booster pump is not
   modelled.
-- Gland and valve stem leakages are not modelled. The validation case shows
-  the size of the effect: about +2.4 % reheat flow and +0.4 % heat rate.
+- Leakages are lumped into two flows at main steam enthalpy; real units
+  have more leak-off points at lower enthalpy, and the routing used here is
+  an assumption.
 
 ### License
 
@@ -217,13 +227,14 @@ Python 接口见上方英文部分的示例：`load_params` → `build_model` �
 | 项目 | 数值 |
 |---|---|
 | 发电机端功率 | 300.0 MW（给定） |
-| 汽轮机热耗率 | 7908.1 kJ/kWh |
-| 主蒸汽 | 16.7 MPa / 538 ℃，900.1 t/h |
-| 再热蒸汽 | 3.249 MPa / 538 ℃，760.0 t/h |
+| 汽轮机热耗率 | 7948.7 kJ/kWh |
+| 主蒸汽 | 16.7 MPa / 538 ℃，908.7 t/h |
+| 再热蒸汽 | 3.249 MPa / 538 ℃，747.5 t/h |
 | 给水温度 | 274.8 ℃ |
-| 高 / 中 / 低压缸效率 | 88.6 % / 91.9 % / 88.2 % |
-| 凝汽器 | 4.9 kPa，352.4 MW |
-| 给水泵汽轮机 | 耗汽 33.9 t/h，6.66 MW |
+| 高 / 中 / 低压缸效率 | 88.6 % / 91.4 % / 88.2 % |
+| 门杆漏汽 / 高中压缸间轴封漏汽 | 3.8 t/h 去 H3 / 15.8 t/h 去中压缸进口 |
+| 凝汽器 | 4.9 kPa，355.8 MW |
+| 给水泵汽轮机 | 耗汽 34.2 t/h，6.72 MW |
 
 校准：功率、热耗率与参考值偏差小于 1e-8（限值 0.5 %）。**参考值是对同
 一组典型参数做的独立常规热平衡手算**（`plants/sub300/handcalc.py`，只用
@@ -241,17 +252,21 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
 `plants/sub300/validation_en16093727.yaml`、
 `plants/sub300/test_validation.py`）。对比结果见上方英文表格，要点：
 
-- 功率偏差 +0.01 %（标定量），热耗率 8224.0 对 8192.6 kJ/kWh，偏差
-  +0.38 %。
+- 功率偏差 0.00 %（标定量），热耗率 8190.8 对 8192.6 kJ/kWh，偏差
+  −0.02 %。
 - 论文没有给出背压、排汽参数和热耗率。有两个参数各用一个公开数值标定：
-  背压（14.55 kPa，对 RH7 抽汽量）和末级段效率（0.803，对功率）。热耗
+  背压（14.55 kPa，对 RH7 抽汽量）和末级段效率（0.865，对功率）。热耗
   率参考值由论文的主汽、再热、给水数据算出。
+- 两股漏汽量由论文的质量平衡直接得出，没有拟合：5.63 kg/s 不经过再热
+  器，其中 1.09 kg/s 进入高加疏水系统。去向（RH3 汽侧和中压缸进口，按
+  主汽焓）是假设。
+- 功率是标定的，再热流量由漏汽总量确定，所以热耗率和再热流量的吻合几
+  乎是必然结果，不算独立证据。
 - 反推的背压和 7 级回热布置指向直接空冷、电动给水泵机组。这是推断，论
   文没有明说。
-- 5 段抽汽量是真正的预测值，偏差都在 1 % 以内。
-- RH3 抽汽量偏差 +17 %、再热流量偏差 +2.4 %，原因是设计值含轴封和门杆
-  漏汽（有 5.6 kg/s 不经过再热器），模型没有建；论文自己的模型也有同样
-  的偏差。
+- 真正的预测值是 6 段抽汽量：5 段偏差在 1 % 以内，RH3 在 4 % 以内。
+- 不建漏汽（并重新标定末级段效率）时，热耗率偏高 0.38 %，RH3 抽汽量偏
+  差 17 %；有一个测试保留了这组对比。
 
 ### 数据来源与免责声明
 
@@ -266,7 +281,7 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
   S1–S6）或明确的工程假设（`assumptions`，A1–A16），有测试强制检查，验
   证算例的数据文件同样检查。
 - 验证算例的公开机组印证了几条假设：再热压损 10 %、高加抽汽管压损 3 %、
-  端差 0 / 2.8 K 和 5.6 K。
+  端差 0 / 2.8 K 和 5.6 K，漏汽份额也取自它。
 
 主要假设及其对热耗率的影响见上方英文表格，完整清单和理由在
 `design_data.yaml`。
@@ -279,8 +294,9 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
   水冷却段。
 - `feed_pump.drive` 可选 `turbine`（汽动）或 `motor`（电动）；前置泵没
   有建。
-- 没有建轴封和门杆漏汽。验证算例给出了影响的大小：再热流量约 +2.4 %，
-  热耗率约 +0.4 %。
+- 漏汽合并成两股、按主汽焓处理（假设 A17：0.42 % 去 H3，1.74 % 去中压
+  缸进口，使热耗率比不计漏汽高 0.51 %）。真实机组的漏汽点更多、焓更低，
+  这里的去向是假设。
 
 ### 许可
 

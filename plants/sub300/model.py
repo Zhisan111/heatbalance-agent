@@ -41,7 +41,7 @@ from tespy.components import (
     Turbine,
     Valve,
 )
-from tespy.connections import Connection, PowerConnection
+from tespy.connections import Connection, PowerConnection, Ref
 from tespy.networks import Network
 
 DATA_FILE = Path(__file__).with_name("design_data.yaml")
@@ -110,6 +110,12 @@ def build_model(params: dict | None = None) -> Network:
       cascade to the previous heater in the list (deaerator or condenser at
       the end of a cascade). The deaerator is a mixing heater with saturated
       outlet, followed by the feed pump.
+    - ``leakages`` (optional) are steam flows leaving the main path other
+      than through extractions, e.g. valve stem and gland leakage. Source:
+      ``main_steam``, ``hot_reheat`` or a section label (state at its
+      outlet). Destination: a heater label (its shell), ``condenser`` or a
+      downstream section label (its inlet). Flow: ``fraction`` of the main
+      steam flow or ``m`` in kg/s.
     - ``feed_pump.drive`` is ``turbine`` (the pump is driven by its own
       turbine, BFPT, exhausting to the main condenser) or ``motor`` (pump
       power is an external input and is not deducted from gross output).
@@ -145,13 +151,59 @@ def build_model(params: dict | None = None) -> Network:
         conns.append(c)
         return c
 
-    # ---- consumers of every extraction point ------------------------------
-    consumers = {s["label"]: [] for s in sections}
-    for h in heaters:
-        consumers[h["extraction"]].append(("heater", h["label"]))
+    leaks = p.get("leakages", [])
     turbine_drive = fp.get("drive", "turbine") == "turbine"
+
+    # ---- streams leaving and entering the main steam path -----------------
+    # tap point -> labels of the streams taken there
+    taps = {"main_steam": [], "hot_reheat": []}
+    taps.update({s["label"]: [] for s in sections})
+    for h in heaters:
+        taps[h["extraction"]].append(f"ext_{h['label']}")
     if turbine_drive:
-        consumers[fp["bfpt"]["extraction"]].append(("bfpt", "BFPT"))
+        taps[fp["bfpt"]["extraction"]].append("ext_BFPT")
+    for lk in leaks:
+        taps[lk["source"]].append(f"leak_{lk['label']}")
+    # destination -> number of leakage streams entering there
+    leaks_into: dict = {}
+    for lk in leaks:
+        dest = lk["destination"]
+        leaks_into[dest] = leaks_into.get(dest, 0) + 1
+
+    stream_outlets: dict = {}  # stream label -> (component, outlet)
+    free_inlets: dict = {}  # leakage destination -> [(component, inlet)]
+    cond_inflows: list = []  # open ends returning to the condenser
+
+    def end(src, out, label, **spec):
+        """Open end of the main steam path: the next connection to create."""
+        return {"src": src, "out": out, "label": label, "spec": spec}
+
+    def close(head, dst, inl):
+        c = connect(head["src"], head["out"], dst, inl, head["label"])
+        if head["spec"]:
+            c.set_attr(**head["spec"])
+        return c
+
+    def tap(point, name, head, label_after):
+        """Insert a splitter if any stream is taken at this point."""
+        users = taps[point]
+        if not users:
+            return head
+        split = Splitter(name, num_out=1 + len(users))
+        close(head, split, "in1")
+        for k, user in enumerate(users):
+            stream_outlets[user] = (split, f"out{k + 2}")
+        return end(split, "out1", label_after)
+
+    def join(label, head):
+        """Insert a mixer in front of a section that receives leakage."""
+        n = leaks_into.get(label, 0)
+        if not n:
+            return head
+        mix = Merge(f"{label} inlet", num_in=1 + n)
+        close(head, mix, "in1")
+        free_inlets[label] = [(mix, f"in{k + 2}") for k in range(n)]
+        return end(mix, "out1", f"{label}_in")
 
     # ---- steam generator and turbine train --------------------------------
     boiler = SimpleHeatExchanger("boiler")
@@ -159,74 +211,62 @@ def build_model(params: dict | None = None) -> Network:
     closer = CycleCloser("cycle closer")
     turbines = {s["label"]: Turbine(s["label"]) for s in sections}
 
-    # steam nodes that collect flows returning to the condenser
-    cond_inflows: list = []  # (component, outlet, label)
-    pending_exhaust_spec = None
-    steam_supply: dict = {}  # consumer label -> (splitter, outlet)
-
-    c = connect(closer, "out1", turbines[sections[0]["label"]], "in1", "main_steam")
-    c.set_attr(fluid={FLUID: 1}, p=p["main_steam"]["p"], T=p["main_steam"]["T"])
+    main_spec = {
+        "fluid": {FLUID: 1}, "p": p["main_steam"]["p"], "T": p["main_steam"]["T"]
+    }
     if "main_steam_flow" in p["rating"]:
-        c.set_attr(m=p["rating"]["main_steam_flow"])
+        main_spec["m"] = p["rating"]["main_steam_flow"]
+    head = end(closer, "out1", "main_steam", **main_spec)
+    head = tap(
+        "main_steam", "main steam tap", head,
+        f"main_steam_to_{sections[0]['label']}"
+    )
 
     for i, sec in enumerate(sections):
         label = sec["label"]
         turb = turbines[label]
-        users = consumers[label]
         is_last = i == len(sections) - 1
-        p_out = p_cond if sec["p_out"] == "condenser" else sec["p_out"]
-
-        if users:
-            split = Splitter(f"extraction {label}", num_out=1 + len(users))
-            c = connect(turb, "out1", split, "in1", f"{label}_out")
-            for k, (_, user) in enumerate(users):
-                steam_supply[user] = (split, f"out{k + 2}")
-            src, out = split, "out1"
-        else:
-            c = None
-            src, out = turb, "out1"
-
-        if is_last:
-            cond_inflows.append((src, out, "lp_exhaust"))
-        elif label == p["turbine"]["reheat_after"]:
-            cold = connect(src, out, reheater, "in1", "cold_reheat")
-            hot = connect(
-                reheater, "out1", turbines[sections[i + 1]["label"]], "in1",
-                "hot_reheat"
-            )
-            hot.set_attr(T=p["reheat"]["T"])
-            reheater.set_attr(pr=p["reheat"]["pr"])
-            c = c or cold
-        else:
-            nxt = connect(
-                src, out, turbines[sections[i + 1]["label"]], "in1",
-                f"{label}_to_{sections[i + 1]['label']}"
-            )
-            c = c or nxt
+        close(join(label, head), turb, "in1")
 
         # state at section outlet: pressure plus enthalpy or efficiency
-        outlet_spec = {"p": p_out}
+        outlet_spec = {"p": p_cond if sec["p_out"] == "condenser" else sec["p_out"]}
         if "h_out" in sec:
             outlet_spec["h"] = sec["h_out"]
         else:
             turb.set_attr(eta_s=sec["eta_s"])
-        if c is None:
-            # last section without extraction: its outlet connection (to the
-            # condenser inlet) is created further down
-            pending_exhaust_spec = outlet_spec
+
+        if is_last:
+            role = "lp_exhaust"
+        elif label == p["turbine"]["reheat_after"]:
+            role = "cold_reheat"
         else:
-            c.set_attr(**outlet_spec)
+            role = f"{label}_to_{sections[i + 1]['label']}"
+        head = end(
+            turb, "out1", f"{label}_out" if taps[label] else role, **outlet_spec
+        )
+        head = tap(label, f"extraction {label}", head, role)
+
+        if is_last:
+            cond_inflows.append(head)
+        elif label == p["turbine"]["reheat_after"]:
+            close(head, reheater, "in1")
+            reheater.set_attr(pr=p["reheat"]["pr"])
+            head = end(reheater, "out1", "hot_reheat", T=p["reheat"]["T"])
+            head = tap(
+                "hot_reheat", "hot reheat tap", head,
+                f"hot_reheat_to_{sections[i + 1]['label']}"
+            )
 
     # ---- feed pump turbine --------------------------------------------------
     if turbine_drive:
         bfpt = Turbine("BFPT")
         bfpt_valve = Valve("BFPT supply line")
-        split, out = steam_supply["BFPT"]
+        split, out = stream_outlets["ext_BFPT"]
         connect(split, out, bfpt_valve, "in1", "ext_BFPT")
         connect(bfpt_valve, "out1", bfpt, "in1", "steam_BFPT")
         bfpt_valve.set_attr(pr=fp["bfpt"]["line_pr"])
         bfpt.set_attr(eta_s=fp["bfpt"]["eta_s"])
-        cond_inflows.append((bfpt, "out1", "bfpt_exhaust"))
+        cond_inflows.append(end(bfpt, "out1", "bfpt_exhaust"))
 
     # ---- feedwater train ------------------------------------------------------
     condenser = Condenser("condenser")
@@ -243,11 +283,16 @@ def build_model(params: dict | None = None) -> Network:
         gets_drain = (
             k + 1 < len(heaters) and heaters[k + 1]["type"] == "surface"
         )
+        n_leaks = leaks_into.get(label, 0)
         if h["type"] == "deaerator":
-            comp = Merge(label, num_in=3 if gets_drain else 2)
+            # inlets: water, extraction steam, [drain], [leakages]
+            comp = Merge(label, num_in=2 + gets_drain + n_leaks)
             shell_inlets[label] = (comp, "in2")
             if gets_drain:
                 drain_targets[label] = (comp, "in3")
+            free_inlets[label] = [
+                (comp, f"in{3 + gets_drain + j}") for j in range(n_leaks)
+            ]
         else:
             comp = Condenser(label)
             comp.set_attr(
@@ -261,11 +306,18 @@ def build_model(params: dict | None = None) -> Network:
             # bound is lifted. The energy balance is not affected.
             comp.ttd_u.min_val = -float("inf")
             comp.ttd_min.min_val = -float("inf")
-            if gets_drain:
-                mix = Merge(f"{label} shell inlet", num_in=2)
+            if gets_drain or n_leaks:
+                # inlets: extraction steam, [drain], [leakages]
+                mix = Merge(
+                    f"{label} shell inlet", num_in=1 + gets_drain + n_leaks
+                )
                 connect(mix, "out1", comp, "in1", f"shell_{label}")
                 shell_inlets[label] = (mix, "in1")
-                drain_targets[label] = (mix, "in2")
+                if gets_drain:
+                    drain_targets[label] = (mix, "in2")
+                free_inlets[label] = [
+                    (mix, f"in{2 + gets_drain + j}") for j in range(n_leaks)
+                ]
             else:
                 shell_inlets[label] = (comp, "in1")
         heater_comps[label] = comp
@@ -303,7 +355,7 @@ def build_model(params: dict | None = None) -> Network:
         comp = heater_comps[label]
         line = Valve(f"{label} extraction line")
         line.set_attr(pr=h["line_pr"])
-        split, out = steam_supply[label]
+        split, out = stream_outlets[f"ext_{label}"]
         connect(split, out, line, "in1", f"ext_{label}")
         dst, inl = shell_inlets[label]
         connect(line, "out1", dst, inl, f"steam_{label}")
@@ -316,15 +368,30 @@ def build_model(params: dict | None = None) -> Network:
             connect(drain_valve, "out1", dst, inl, f"drain_{label}_throttled")
         else:
             cond_inflows.append(
-                (drain_valve, "out1", f"drain_{label}_throttled")
+                end(drain_valve, "out1", f"drain_{label}_throttled")
             )
+
+    # leakages: throttled from their source to the destination pressure
+    main_steam = next(c for c in conns if c.label == "main_steam")
+    for lk in leaks:
+        name = lk["label"]
+        valve = Valve(f"leak {name}")
+        split, out = stream_outlets[f"leak_{name}"]
+        c = connect(split, out, valve, "in1", f"leak_{name}")
+        if "fraction" in lk:
+            c.set_attr(m=Ref(main_steam, lk["fraction"], 0))
+        else:
+            c.set_attr(m=lk["m"])
+        if lk["destination"] == "condenser":
+            cond_inflows.append(end(valve, "out1", f"leak_{name}_throttled"))
+        else:
+            dst, inl = free_inlets[lk["destination"]].pop(0)
+            connect(valve, "out1", dst, inl, f"leak_{name}_throttled")
 
     # condenser
     cond_mix = Merge("condenser inlet", num_in=len(cond_inflows))
-    for k, (src, out, label) in enumerate(cond_inflows):
-        c = connect(src, out, cond_mix, f"in{k + 1}", label)
-        if label == "lp_exhaust" and pending_exhaust_spec is not None:
-            c.set_attr(**pending_exhaust_spec)
+    for k, head in enumerate(cond_inflows):
+        close(head, cond_mix, f"in{k + 1}")
     connect(cond_mix, "out1", condenser, "in1", "condenser_in")
     c = connect(cw_in, "out1", condenser, "in2", "cw_in")
     c.set_attr(
@@ -371,6 +438,10 @@ def build_model(params: dict | None = None) -> Network:
         "feedwater": feedwater_label,
         "exhaust": "lp_exhaust",
         "feed_pump_drive": "turbine" if turbine_drive else "motor",
+        "leakages": [
+            {k: lk[k] for k in ("label", "source", "destination")}
+            for lk in leaks
+        ],
     }
     return nw
 
@@ -405,6 +476,31 @@ def _validate(p: dict) -> None:
         p["feed_pump"]["bfpt"]["extraction"] not in sections
     ):
         raise ModelError("feed_pump.bfpt.extraction: unknown section")
+    heater_labels = [h["label"] for h in p["heaters"]]
+    leak_labels = [lk["label"] for lk in p.get("leakages", [])]
+    if len(set(leak_labels)) != len(leak_labels):
+        raise ModelError("leakage labels must be unique")
+    path = ["main_steam"]
+    for label in sections:
+        path.append(label)
+        if label == p["turbine"]["reheat_after"]:
+            path.append("hot_reheat")
+    for lk in p.get("leakages", []):
+        name = lk["label"]
+        if ("fraction" in lk) == ("m" in lk):
+            raise ModelError(f"leakage {name}: give exactly one of fraction and m")
+        if lk["source"] not in path:
+            raise ModelError(f"leakage {name}: unknown source {lk['source']}")
+        dest = lk["destination"]
+        if dest in sections:
+            # steam can only re-enter the turbine downstream of its source
+            if path.index(dest) <= path.index(lk["source"]):
+                raise ModelError(
+                    f"leakage {name}: destination section {dest} is not "
+                    f"downstream of {lk['source']}"
+                )
+        elif dest != "condenser" and dest not in heater_labels:
+            raise ModelError(f"leakage {name}: unknown destination {dest}")
     if ("gross_power" in p["rating"]) == ("main_steam_flow" in p["rating"]):
         raise ModelError(
             "rating: give exactly one of gross_power and main_steam_flow"
@@ -473,8 +569,9 @@ def summarize(network: Network) -> dict:
     -------
     dict
         ``performance`` (power, heat rate, flows), ``turbine`` (section and
-        cylinder data), ``extractions``, ``heaters``, ``condenser``,
-        ``pumps`` and ``states`` (every connection by label).
+        cylinder data), ``extractions``, ``leakages``, ``heaters``,
+        ``condenser``,
+        ``pumps``, ``states`` (every connection by label) and ``power``.
     """
     nw = network
     plant = nw.plant
@@ -579,6 +676,16 @@ def summarize(network: Network) -> dict:
         heaters.append(entry)
     extractions.sort(key=lambda e: e["no"])
 
+    leakages = []
+    for lk in plant["leakages"]:
+        src = states[f"leak_{lk['label']}"]
+        dst = states[f"leak_{lk['label']}_throttled"]
+        leakages.append({
+            **lk,
+            "m": src["m"], "fraction": src["m"] / main["m"], "h": src["h"],
+            "p_source": src["p"], "p_destination": dst["p"],
+        })
+
     drive = plant["feed_pump_drive"]
     bfpt_flow = states["steam_BFPT"]["m"] if drive == "turbine" else 0.0
     cw_in, cw_out = states["cw_in"], states["cw_out"]
@@ -613,6 +720,7 @@ def summarize(network: Network) -> dict:
             "hot_reheat": states["hot_reheat"],
         },
         "extractions": extractions,
+        "leakages": leakages,
         "heaters": heaters,
         "condenser": {
             "p": states["condenser_in"]["p"],

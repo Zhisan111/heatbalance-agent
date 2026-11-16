@@ -96,6 +96,12 @@ FAULTS = [
      "condenser", WARNING),
     (lambda s: s["pumps"].update(bfpt_steam_fraction=0.10),
      "bfpt_steam_fraction", "BFPT", WARNING),
+    (lambda s: s["leakages"][0].update(fraction=0.05),
+     "leakage_fraction", "leakage valve_stem", WARNING),
+    (lambda s: s["leakages"][1].update(p_destination=20.0),
+     "leakage_pressure", "leakage hp_ip_gland", ERROR),
+    (lambda s: [lk.update(fraction=0.025) for lk in s["leakages"]],
+     "leakage_fraction_total", "leakages", WARNING),
 ]
 
 

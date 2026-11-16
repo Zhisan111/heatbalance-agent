@@ -57,8 +57,8 @@ assumptions:
     choice: Motor driven; pump power is not deducted from "power generation".
     rationale: >
       Figure 1 shows the feed pump without drive turbine. With a
-      turbine-driven pump the published power could only be met with an
-      implausible last-section efficiency of about 0.95 (see V6).
+      turbine-driven pump the published power cannot be met with a
+      last-section efficiency below 1 (see V6).
   V5:
     item: Condenser pressure (not published)
     choice: 14.55 kPa, calibrated so that the RH7 extraction flow equals the published 11.64 kg/s.
@@ -70,15 +70,12 @@ assumptions:
       placeholders without effect on the cycle.
   V6:
     item: Last LP section (not published)
-    choice: Isentropic efficiency 0.803 including exhaust loss, calibrated so that gross power equals the published 300.234 MW at the published main steam flow.
+    choice: Isentropic efficiency 0.865 including exhaust loss, calibrated so that gross power equals the published 300.234 MW at the published main steam flow.
     rationale: One free parameter fitted to one published value; the result is plausible for a last stage group.
   V7:
     item: Neglected items
-    choice: Gland and valve stem leakage and all other minor flows are neglected; water-side pressure drops follow Table 2.
-    rationale: >
-      Published reheat flow (217.66 kg/s) is 5.6 kg/s lower than main steam
-      minus RH1 and RH2 extraction, i.e. the design includes leakages. The
-      authors' own model neglects them as well.
+    choice: Minor flows other than the leakages of V10 are neglected; water-side pressure drops follow Table 2.
+    rationale: Not published.
   V8:
     item: Cylinder boundaries
     choice: IP cylinder ends at the RH5 extraction, LP cylinder starts there.
@@ -90,6 +87,20 @@ assumptions:
       (main steam flow x (h_main - h_feedwater) + reheat flow x (h_hot -
       h_cold)) / power = 8192.6 kJ/kWh.
     rationale: All quantities of the definition are published design values.
+  V10:
+    item: Valve stem and gland leakage
+    choice: >
+      Flows derived from the published mass balances: 5.63 kg/s bypass the
+      reheater (main steam - RH1 - RH2 - reheat flow) and 1.09 kg/s enter
+      the HP drain cascade besides the extractions (feedwater - condensate
+      - RH1 - RH2 - RH3 - DEA). Modelled as 1.09 kg/s to the RH3 shell and
+      the remaining 4.54 kg/s to the IP inlet, both at main steam enthalpy.
+    rationale: >
+      The flows follow from Tables 1 and 2 without fitting. Source state
+      and routing are not published: RH3 is chosen because its published
+      extraction flow is otherwise missed by 17 %; the IP inlet is chosen
+      because sending 4.54 kg/s to the condenser would require a
+      last-section efficiency of 0.96 to meet the published power.
 
 parameters:
   rating:
@@ -116,7 +127,11 @@ parameters:
       - {label: IP3, cylinder: IP, p_out: 0.588421, h_out: 3052.9, ref: [S6, V1, V2, V8]}
       - {label: LP1, cylinder: LP, p_out: 0.240737, h_out: 2870.8, ref: [S6, V1, V2]}
       - {label: LP2, cylinder: LP, p_out: 0.082737, h_out: 2680.1, ref: [S6, V1, V2]}
-      - {label: LP3, cylinder: LP, p_out: condenser, eta_s: 0.803, ref: V6}
+      - {label: LP3, cylinder: LP, p_out: condenser, eta_s: 0.865, ref: V6}
+
+  leakages:
+    - {label: valve_stem,  source: main_steam, destination: RH3, m: 1.09, ref: [S6, V10]}
+    - {label: hp_ip_gland, source: main_steam, destination: IP1, m: 4.54, ref: [S6, V10]}
 
   heaters:
     - {label: RH7, type: surface,   extraction: LP2, line_pr: 0.95,    ttd_u: 2.8,   ttd_l: 5.6, dp_water: 0.01, ref: [S6, V2, V3]}
@@ -152,6 +167,8 @@ published:
   hot_reheat_p: {value: 3.318, unit: MPa, ref: S6}
   feedwater_T: {value: 272.2, unit: degC, ref: S6}
   feedwater_p: {value: 16.77, unit: MPa, ref: S6}
+  # Table 2: feedwater flow through RH5-RH7
+  condensate_flow: {value: 206.28, unit: kg/s, ref: S6}
   # Table 2: extraction steam temperature, pressure and flow per heater
   heaters:
     - {label: RH1, T: 381.7, p: 5.5498, m: 17.08, ref: S6}
@@ -168,5 +185,7 @@ tolerances:
   heat_rate: {value: 0.005, unit: "-", ref: V9}
   # heaters whose extraction flow is a genuine prediction
   extraction_flow: {value: 0.015, unit: "-", ref: V7}
-  # reheat flow differs by the neglected leakages
-  reheat_steam_flow: {value: 0.03, unit: "-", ref: V7}
+  # RH3 depends on the assumed leakage routing and on the feed pump
+  # enthalpy rise (the published 16.8 MPa discharge pressure is low)
+  extraction_flow_rh3: {value: 0.05, unit: "-", ref: V10}
+  reheat_steam_flow: {value: 0.005, unit: "-", ref: V10}
