@@ -104,7 +104,7 @@ def test_leakages_bypass_hp_turbine_and_reheater(summary, params):
         assert lk["h"] == pytest.approx(states["main_steam"]["h"])
         assert lk["p_destination"] < lk["p_source"]
     total = sum(lk["m"] for lk in leaks.values())
-    assert states["main_steam_to_HP1"]["m"] == pytest.approx(main - total)
+    assert states["turbine_inlet"]["m"] == pytest.approx(main - total)
     ext = {e["heater"]: e["m"] for e in summary["extractions"]}
     assert states["hot_reheat"]["m"] == pytest.approx(
         main - total - ext["H1"] - ext["H2"]

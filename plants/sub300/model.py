@@ -43,6 +43,8 @@ from tespy.components import (
 )
 from tespy.connections import Connection, PowerConnection, Ref
 from tespy.networks import Network
+from tespy.tools import UserDefinedEquation
+from tespy.tools.characteristics import CharLine
 
 DATA_FILE = Path(__file__).with_name("design_data.yaml")
 
@@ -59,6 +61,11 @@ UNITS = {
     "power": "MW",
     "heat": "MW",
 }
+
+
+# Efficiency characteristic used off design: the section efficiency stays at
+# its design value whatever the flow (A18).
+_FLAT = CharLine(x=[0.0, 10.0], y=[1.0, 1.0])
 
 
 class ModelError(RuntimeError):
@@ -217,10 +224,14 @@ def build_model(params: dict | None = None) -> Network:
     if "main_steam_flow" in p["rating"]:
         main_spec["m"] = p["rating"]["main_steam_flow"]
     head = end(closer, "out1", "main_steam", **main_spec)
-    head = tap(
-        "main_steam", "main steam tap", head,
-        f"main_steam_to_{sections[0]['label']}"
-    )
+    head = tap("main_steam", "main steam tap", head, "main_steam_to_valve")
+    # Stop and control valves. Fully open at the design point (their loss is
+    # contained in the HP1 efficiency, A12); in off-design operation they
+    # throttle the steam to the pressure demanded by the operating mode.
+    valve = Valve("main steam valve")
+    valve.set_attr(pr=1)
+    close(head, valve, "in1")
+    head = end(valve, "out1", "turbine_inlet")
 
     for i, sec in enumerate(sections):
         label = sec["label"]
@@ -228,12 +239,22 @@ def build_model(params: dict | None = None) -> Network:
         is_last = i == len(sections) - 1
         close(join(label, head), turb, "in1")
 
-        # state at section outlet: pressure plus enthalpy or efficiency
+        # State at section outlet: pressure plus enthalpy or efficiency. In
+        # off-design operation the pressures follow from Stodola's cone law
+        # and the efficiency stays at its design value (A18).
         outlet_spec = {"p": p_cond if sec["p_out"] == "condenser" else sec["p_out"]}
         if "h_out" in sec:
             outlet_spec["h"] = sec["h_out"]
         else:
             turb.set_attr(eta_s=sec["eta_s"])
+        outlet_spec["design"] = [k for k in ("p", "h") if k in outlet_spec]
+        if is_last:
+            # condenser pressure is an operating condition, see apply
+            outlet_spec["design"].remove("p")
+        turb.set_attr(
+            design=["eta_s"], offdesign=["eta_s_char", "cone"],
+            eta_s_char={"char_func": _FLAT, "param": "m"},
+        )
 
         if is_last:
             role = "lp_exhaust"
@@ -250,7 +271,9 @@ def build_model(params: dict | None = None) -> Network:
             cond_inflows.append(head)
         elif label == p["turbine"]["reheat_after"]:
             close(head, reheater, "in1")
-            reheater.set_attr(pr=p["reheat"]["pr"])
+            reheater.set_attr(
+                pr=p["reheat"]["pr"], design=["pr"], offdesign=["zeta_d4"]
+            )
             head = end(reheater, "out1", "hot_reheat", T=p["reheat"]["T"])
             head = tap(
                 "hot_reheat", "hot reheat tap", head,
@@ -338,7 +361,8 @@ def build_model(params: dict | None = None) -> Network:
             c.set_attr(x=0)
             feed_pump.set_attr(eta_s=fp["eta_s"])
             src, out, label = feed_pump, "out1", "feed_pump_out"
-            next_spec = {"p": fp["p_out"]}
+            # off design: discharge pressure follows from the boiler loss
+            next_spec = {"p": fp["p_out"], "design": ["p"]}
         else:
             c = connect(src, out, comp, "in2", label)
             c.set_attr(**next_spec)
@@ -348,6 +372,7 @@ def build_model(params: dict | None = None) -> Network:
     c.set_attr(**next_spec)
     feedwater_label = label
     connect(boiler, "out1", closer, "in1", "boiler_out")
+    boiler.set_attr(offdesign=["zeta_d4"])
 
     # steam side and drains
     for k, h in enumerate(heaters):
@@ -379,9 +404,9 @@ def build_model(params: dict | None = None) -> Network:
         split, out = stream_outlets[f"leak_{name}"]
         c = connect(split, out, valve, "in1", f"leak_{name}")
         if "fraction" in lk:
-            c.set_attr(m=Ref(main_steam, lk["fraction"], 0))
+            c.set_attr(m=Ref(main_steam, lk["fraction"], 0), design=["m"])
         else:
-            c.set_attr(m=lk["m"])
+            c.set_attr(m=lk["m"], design=["m"])
         if lk["destination"] == "condenser":
             cond_inflows.append(end(valve, "out1", f"leak_{name}_throttled"))
         else:
@@ -404,6 +429,11 @@ def build_model(params: dict | None = None) -> Network:
 
     # ---- power side -----------------------------------------------------------
     shaft = PowerBus("shaft", num_in=len(sections), num_out=1)
+    # Mechanical (bearing) losses: constant absolute value off design (A19).
+    bearings = Generator("mechanical losses")
+    bearings.set_attr(
+        eta=p["turbine"]["eta_mech"], design=["eta"], offdesign=["delta_power"]
+    )
     generator = Generator("generator")
     grid = PowerSink("grid")
     pconns = [
@@ -414,12 +444,19 @@ def build_model(params: dict | None = None) -> Network:
         for k, s in enumerate(sections)
     ]
     pconns.append(
-        PowerConnection(shaft, "power_out1", generator, "power_in", label="P_shaft")
+        PowerConnection(
+            shaft, "power_out1", bearings, "power_in", label="P_shaft"
+        )
+    )
+    pconns.append(
+        PowerConnection(
+            bearings, "power_out", generator, "power_in", label="P_coupling"
+        )
     )
     gross = PowerConnection(generator, "power_out", grid, "power", label="P_gross")
     if "gross_power" in p["rating"]:
         gross.set_attr(E=p["rating"]["gross_power"])
-    generator.set_attr(eta=p["turbine"]["eta_mech"] * p["turbine"]["eta_gen"])
+    generator.set_attr(eta=p["turbine"]["eta_gen"])
     pconns.append(gross)
     if turbine_drive:
         pconns.append(
@@ -438,6 +475,7 @@ def build_model(params: dict | None = None) -> Network:
         "feedwater": feedwater_label,
         "exhaust": "lp_exhaust",
         "feed_pump_drive": "turbine" if turbine_drive else "motor",
+        "operation": {"mode": "design"},
         "leakages": [
             {k: lk[k] for k in ("label", "source", "destination")}
             for lk in leaks
@@ -597,6 +635,16 @@ def summarize(network: Network) -> dict:
     q_in = q_boiler + q_reheat
     p_gross = power["P_gross"]
     p_shaft = power["P_shaft"]
+    operation = dict(plant["operation"])
+    rated = operation.get("rated_power", p_gross)
+    operation.update({
+        "load": p_gross / rated,
+        "p_main": states["main_steam"]["p"],
+        "p_turbine_inlet": states["turbine_inlet"]["p"],
+        "throttle_pr": states["turbine_inlet"]["p"] / states["main_steam"]["p"],
+    })
+    if operation["mode"] == "design":
+        operation["pressure_mode"] = "design"
 
     # ---- turbine sections and cylinders ---------------------------------------
     sections = []
@@ -653,6 +701,9 @@ def summarize(network: Network) -> dict:
             "m_steam": ext["m"],
         }
         if h["type"] == "surface":
+            entry["drain_to"] = (
+                plant["heaters"][k - 1]["label"] if k > 0 else "condenser"
+            )
             w_in, w_out = _state(c.inl[1]), _state(c.outl[1])
             drain = _state(c.outl[0])
             entry.update({
@@ -708,9 +759,16 @@ def summarize(network: Network) -> dict:
         "exhaust_flow": exhaust["m"],
         "exhaust_h": exhaust["h"],
         "exhaust_x": exhaust["x"],
+        "exhaust_volume_flow": exhaust["m"] * _specific_volume(
+            exhaust["p"], exhaust["h"]
+        ),
+        "load": operation["load"],
+        "mechanical_loss": p_shaft - power["P_coupling"],
+        "generator_loss": power["P_coupling"] - p_gross,
     }
 
     return {
+        "operation": operation,
         "performance": performance,
         "turbine": {
             "sections": sections,
@@ -730,6 +788,7 @@ def summarize(network: Network) -> dict:
             "cw_T_in": cw_in["T"],
             "cw_T_out": cw_out["T"],
             "ttd_u": float(cond.ttd_u.val),
+            "UA": float(cond.UA.val),  # W/K
         },
         "pumps": {
             "feed_pump_power": float(comp("feed pump").P.val),
@@ -760,6 +819,270 @@ def with_fixed_efficiencies(params: dict, summary: dict) -> dict:
         sec.pop("h_out", None)
         sec["eta_s"] = eta[sec["label"]]
     return p
+
+
+# --------------------------------------------------------------------------
+# off-design operation
+# --------------------------------------------------------------------------
+PRESSURE_MODES = ("sliding", "curve", "constant")
+
+
+def design_state(network: Network) -> dict:
+    """Return the design state needed for off-design calculations.
+
+    The result is JSON-serialisable: ``tespy`` holds TESPy's saved network
+    state (reference values for cone law, pressure loss coefficients and
+    so on), ``summary`` the design summary.
+    """
+    if network.plant["operation"]["mode"] != "design":
+        raise ModelError("design_state needs a network solved in design mode")
+    return {"tespy": network.save(), "summary": summarize(network)}
+
+
+def pressure_curve(params: dict, load: float) -> float:
+    """Main steam pressure (MPa) of the operating curve at a load fraction.
+
+    Piecewise linear in the points ``{load, p}`` of
+    ``operation.pressure_curve``, constant outside them.
+    """
+    points = sorted(
+        (pt["load"], pt["p"]) for pt in params["operation"]["pressure_curve"]
+    )
+    loads = [pt[0] for pt in points]
+    if load <= loads[0]:
+        return points[0][1]
+    if load >= loads[-1]:
+        return points[-1][1]
+    for (l0, p0), (l1, p1) in zip(points, points[1:]):
+        if l0 <= load <= l1:
+            return p0 + (p1 - p0) * (load - l0) / (l1 - l0)
+    raise AssertionError("unreachable")
+
+
+def _normalise_conditions(params: dict, state: dict, conditions: dict | None) -> dict:
+    """Check the operating conditions and fill in defaults.
+
+    Keys
+    ----
+    load / gross_power / main_steam_flow
+        Exactly one (default ``load = 1``). ``load`` is the gross power as a
+        fraction of the design gross power.
+    pressure
+        ``"sliding"`` (valves wide open), ``"curve"`` (``operation.
+        pressure_curve``, needs load or gross power), ``"constant"``
+        (design main steam pressure) or a number in MPa. Default:
+        ``operation.pressure_mode`` or ``"sliding"``.
+    condenser
+        None (design back pressure), ``{"p": MPa}`` or ``{"cw_T_in": degC}``
+        (cooling water flow and condenser UA at design values).
+    """
+    c = dict(conditions or {})
+    known = {"load", "gross_power", "main_steam_flow", "pressure", "condenser"}
+    unknown = set(c) - known
+    if unknown:
+        raise ModelError(f"unknown operating conditions: {sorted(unknown)}")
+    rated = state["summary"]["performance"]["gross_power"]
+    given = [k for k in ("load", "gross_power", "main_steam_flow") if k in c]
+    if len(given) > 1:
+        raise ModelError("give only one of load, gross_power, main_steam_flow")
+    if not given:
+        c["load"] = 1.0
+    if "gross_power" in c:
+        c["load"] = c["gross_power"] / rated
+    if "load" in c:
+        if not 0.2 <= c["load"] <= 1.1:
+            raise ModelError("load must be between 0.2 and 1.1")
+        c["gross_power"] = c["load"] * rated
+
+    mode = c.get("pressure", params.get("operation", {}).get("pressure_mode", "sliding"))
+    if isinstance(mode, (int, float)) and not isinstance(mode, bool):
+        c["pressure_mode"], c["p_main"] = "given", float(mode)
+    elif mode == "sliding":
+        c["pressure_mode"], c["p_main"] = "sliding", None
+    elif mode == "constant":
+        c["pressure_mode"] = "constant"
+        c["p_main"] = state["summary"]["turbine"]["main_steam"]["p"]
+    elif mode == "curve":
+        if "load" not in c:
+            raise ModelError("pressure 'curve' needs load or gross_power")
+        if "pressure_curve" not in params.get("operation", {}):
+            raise ModelError("operation.pressure_curve is not defined")
+        c["pressure_mode"] = "curve"
+        c["p_main"] = pressure_curve(params, c["load"])
+    else:
+        raise ModelError(
+            f"pressure must be one of {PRESSURE_MODES} or a number in MPa"
+        )
+    c.pop("pressure", None)
+
+    cond = c.get("condenser")
+    if cond is not None and set(cond) not in ({"p"}, {"cw_T_in"}):
+        raise ModelError("condenser must be {'p': MPa} or {'cw_T_in': degC}")
+    return c
+
+
+def _martin_leakage(ude):
+    """Leakage flow through a labyrinth seal (Martin's formula).
+
+    Written relative to the design point it has the same form as Stodola's
+    cone law: m ~ p1 / sqrt(p1 v1) * sqrt(1 - (p2 / p1)^2).
+    """
+    leak, throttled = ude.conns
+    r = ude.params
+    p1, p2 = leak.p.val_SI, throttled.p.val_SI
+    v1 = leak.calc_vol(T0=leak.T.val_SI)
+    return leak.m.val_SI - r["m"] * p1 / r["p1"] * (
+        r["p1"] * r["v1"] / (p1 * v1)
+    ) ** 0.5 * abs(
+        (1 - (p2 / p1) ** 2) / (1 - (r["p2"] / r["p1"]) ** 2)
+    ) ** 0.5
+
+
+def _martin_dependents(ude):
+    leak, throttled = ude.conns
+    return [leak.m, leak.p, leak.h, throttled.p]
+
+
+def _specific_volume(p: float, h: float) -> float:
+    """Specific volume (m3/kg) at p (MPa) and h (kJ/kg)."""
+    return 1 / PropsSI("D", "P", p * 1e6, "H", h * 1e3, FLUID)
+
+
+def _apply_conditions(network: Network, state: dict, c: dict) -> None:
+    """Set the operating conditions on a network built by build_model."""
+    nw = network
+    design = state["summary"]
+    main = nw.get_conn("main_steam")
+    gross = nw.get_conn("P_gross")
+    valve = nw.get_comp("main steam valve")
+
+    if "main_steam_flow" in c:
+        main.set_attr(m=c["main_steam_flow"])
+        gross.set_attr(E=None)
+    else:
+        main.set_attr(m=None)
+        gross.set_attr(E=c["gross_power"])
+
+    if c["pressure_mode"] == "sliding":
+        main.set_attr(p=None)
+        valve.set_attr(pr=1)
+    else:
+        main.set_attr(p=c["p_main"])
+        valve.set_attr(pr=None)
+
+    exhaust = nw.get_conn("lp_exhaust")
+    condenser = nw.get_comp("condenser")
+    cw_in = nw.get_conn("cw_in")
+    cond = c.get("condenser")
+    if cond is not None and "cw_T_in" in cond:
+        exhaust.set_attr(p=None)
+        condenser.set_attr(ttd_u=None, UA=design["condenser"]["UA"])
+        cw_in.set_attr(m=design["condenser"]["cw_flow"], T=cond["cw_T_in"])
+    else:
+        p_cond = design["condenser"]["p"] if cond is None else cond["p"]
+        exhaust.set_attr(p=p_cond)
+        condenser.set_attr(ttd_u=design["condenser"]["ttd_u"], UA=None)
+        cw_in.set_attr(m=None, T=design["condenser"]["cw_T_in"])
+
+    # leakages follow Martin's labyrinth formula (A20)
+    if not getattr(nw, "_leakage_udes", None):
+        udes = []
+        for lk in design["leakages"]:
+            name = lk["label"]
+            ref = {
+                "m": lk["m"], "p1": lk["p_source"] * 1e6,
+                "p2": lk["p_destination"] * 1e6,
+                "v1": _specific_volume(lk["p_source"], lk["h"]),
+            }
+            ude = UserDefinedEquation(
+                f"leakage {name}", _martin_leakage, _martin_dependents,
+                conns=[nw.get_conn(f"leak_{name}"),
+                       nw.get_conn(f"leak_{name}_throttled")],
+                params=ref,
+            )
+            udes.append(ude)
+        if udes:
+            nw.add_ude(*udes)
+        nw._leakage_udes = udes
+
+
+def solve_offdesign(
+    params: dict, state: dict, conditions: dict | None = None,
+    network: Network | None = None,
+) -> Network:
+    """Solve an off-design (part-load) operating point.
+
+    Parameters
+    ----------
+    params : dict
+        The same parameters the design state was computed with.
+    state : dict
+        Result of :func:`design_state`.
+    conditions : dict, optional
+        Operating conditions, see :func:`_normalise_conditions`. Default:
+        design load with the default pressure mode.
+    network : Network, optional
+        A network returned by an earlier call with the same ``params`` and
+        ``state``; it is re-solved starting from its current solution, which
+        helps convergence when stepping through loads.
+
+    Returns
+    -------
+    Network
+        Solved network; ``summarize`` works as for the design case.
+    """
+    c = _normalise_conditions(params, state, conditions)
+    fresh = network is None
+    nw = build_model(params) if fresh else network
+    _apply_conditions(nw, state, c)
+    try:
+        nw.solve(
+            "offdesign", design_path=state["tespy"],
+            init_path=state["tespy"] if fresh else None,
+        )
+        nw.assert_convergence()
+    except Exception as exc:
+        raise ModelError(f"off-design calculation did not converge: {exc}") from exc
+    nw.plant["operation"] = {
+        "mode": "offdesign",
+        "pressure_mode": c["pressure_mode"],
+        "conditions": {
+            k: v for k, v in c.items() if k not in ("pressure_mode", "p_main")
+        },
+        "rated_power": state["summary"]["performance"]["gross_power"],
+        "design_exhaust_volume_flow":
+            state["summary"]["performance"]["exhaust_volume_flow"],
+    }
+    return nw
+
+
+def load_sweep(
+    params: dict | None = None, loads=(1.0, 0.9, 0.75, 0.5, 0.4),
+    conditions: dict | None = None, step: float = 0.1,
+) -> list[dict]:
+    """Summaries of a series of loads, solved from high to low load.
+
+    Intermediate loads at most ``step`` apart are solved as stepping stones
+    but not returned. ``conditions`` apply to every load (no load key).
+    """
+    p = load_params() if params is None else params
+    design = solve(build_model(p))
+    state = design_state(design)
+    targets = sorted(set(loads), reverse=True)
+    path = [targets[0]]
+    for target in targets[1:]:
+        while path[-1] - target > step + 1e-9:
+            path.append(path[-1] - step)
+        path.append(target)
+    results = {}
+    nw = None
+    for load in path:
+        nw = solve_offdesign(
+            p, state, dict(conditions or {}, load=load), network=nw
+        )
+        if load in targets:
+            results[load] = summarize(nw)
+    return [results[load] for load in sorted(loads, reverse=True)]
 
 
 def run(params: dict | None = None) -> tuple[Network, dict]:

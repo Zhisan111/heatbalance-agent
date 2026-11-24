@@ -198,6 +198,72 @@ assumptions:
       published and are engineering judgement; S6's published power can only
       be met with a plausible LP efficiency if the larger flow re-enters the
       turbine. Effect on heat rate: +0.51 % against no leakage.
+  A18:
+    item: Turbine off-design behaviour
+    choice: >
+      Every section between extraction points follows Stodola's cone law
+      with its design flow capacity; section isentropic efficiencies stay at
+      their design values. No governing stage: load is controlled by sliding
+      pressure and by throttling in the main steam valves (throttle
+      governing). The extraction line relative pressure loss stays constant.
+    rationale: >
+      Standard textbook part-load method (Flügel/Stodola) and the same
+      simplification S6 uses in its model (Table 3). Real 300 MW units mostly
+      use nozzle governing; throttle governing overstates the loss wherever
+      the valves throttle (in this data set below about 75 % load), and
+      constant efficiencies understate the loss of the last LP stages at
+      low load. Engineering judgement.
+  A19:
+    item: Mechanical and generator losses off design
+    choice: Mechanical loss constant in MW (design value); generator efficiency constant.
+    rationale: >
+      Bearing and windage losses hardly depend on load. Generator losses are
+      partly constant (iron, windage) and partly quadratic (copper); keeping
+      the efficiency constant is a simplification. Effect at 50 % load of
+      the order of 0.5 % on heat rate.
+  A20:
+    item: Leakage flows off design
+    choice: >
+      Martin's labyrinth formula relative to the design point, m ~ p1 /
+      sqrt(p1 v1) * sqrt(1 - (p2/p1)^2), with p1, v1 at the leakage source
+      (main steam upstream of the valves for both leakages) and p2 at the
+      destination.
+    rationale: >
+      Standard seal flow model. Using main steam pressure upstream of the
+      valves for the HP-IP gland overstates that leakage where the valves
+      throttle; its true driving pressure is the HP inlet pressure.
+  A21:
+    item: Heaters, pumps and pressure losses off design
+    choice: >
+      Heater terminal differences and water-side pressure drops stay at
+      design values; pump and feed pump turbine efficiencies stay constant;
+      condensate pump discharge pressure stays constant; boiler and reheater
+      pressure losses scale with m^2 v (constant zeta). Deaerator pressure
+      slides with extraction 4 (no auxiliary steam).
+    rationale: >
+      The lumped heater model cannot be driven by a UA value for H1, whose
+      upper terminal difference is negative. Constant terminal differences
+      are a common simplification and slightly conservative. Engineering
+      judgement.
+  A22:
+    item: Main steam pressure curve
+    choice: >
+      Linear in load through the design point (1.0, 16.7 MPa) and the ratio
+      13.25 / 16.67 MPa at 75 % THA published in S6, down to 40 % load
+      (8.48 MPa); constant below 40 % and above 100 %.
+    rationale: >
+      S6 is the only public sliding pressure point found for this class.
+      The straight line and the 40 % break point are assumptions; the
+      default operating mode is this curve, pure sliding pressure and
+      constant pressure are available as options.
+  A23:
+    item: Condenser off design
+    choice: >
+      Default: design back pressure (manufacturers' part-load heat balances
+      are usually quoted at rated back pressure). Optional: cooling water
+      flow and condenser UA kept at design values with a given cooling
+      water inlet temperature.
+    rationale: Engineering judgement; UA independent of steam load is a simplification.
 
 parameters:
   rating:
@@ -236,6 +302,15 @@ parameters:
   leakages:
     - {label: valve_stem,  source: main_steam, destination: H3,  fraction: 0.0042, ref: [S6, A17]}
     - {label: hp_ip_gland, source: main_steam, destination: IP1, fraction: 0.0174, ref: [S6, A17]}
+
+  # Off-design operation (used by solve_offdesign / load_sweep)
+  operation:
+    pressure_mode: curve
+    # load: fraction of design gross power; p: main steam pressure, MPa
+    pressure_curve:
+      - {load: 0.40, p: 8.4772,  ref: [S6, A22]}
+      - {load: 0.75, p: 13.2738, ref: [S6, A22]}
+      - {load: 1.00, p: 16.70,   ref: [S2, A22]}
 
   # Feedwater heaters in water-flow order (condenser -> boiler).
   # extraction: label of the turbine section whose outlet feeds the heater.
