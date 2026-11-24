@@ -272,8 +272,10 @@ def test_part_load_predictions(result75, pub75, tol75):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Planned 1 % power criterion is not met (-2.0 %): no governing "
-    "stage (throttle governing, A18) and unknown back pressure (V11).",
+    reason="Planned 1 % power criterion is not met (-2.0 %). The back "
+    "pressure at 75 % is not published and moves power by about 1 % per "
+    "2 kPa, more than the criterion (V11); the missing governing stage "
+    "(A18) adds at most about 1.4 %.",
 )
 def test_part_load_power_within_planned_tolerance(result75, pub75, tol75):
     assert result75[1]["performance"]["gross_power"] == pytest.approx(
@@ -309,3 +311,21 @@ def test_part_load_checks_and_hand_calculation(result75, case_params, conditions
     assert summary["turbine"]["hot_reheat"]["p"] == pytest.approx(
         ref["hot_reheat_p"], rel=1e-6
     )
+
+
+def test_part_load_power_is_dominated_by_unknown_back_pressure(result, case_params, conditions75, pub75):
+    """Within plausible back pressures the power deviation changes sign.
+
+    This is why the power criterion cannot discriminate model errors at
+    75 % THA (V11); it is not a calibration.
+    """
+    state = model.design_state(result[0])
+    deviation = {}
+    for p_cond in (0.012, 0.010):
+        nw = model.solve_offdesign(
+            case_params, state, dict(conditions75, condenser={"p": p_cond})
+        )
+        deviation[p_cond] = (
+            model.summarize(nw)["performance"]["gross_power"] / pub75["gross_power"] - 1
+        )
+    assert deviation[0.012] < 0 < deviation[0.010]

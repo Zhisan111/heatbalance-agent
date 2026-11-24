@@ -113,7 +113,10 @@ assumptions:
       efficiency). Everything else is predicted.
     rationale: >
       The paper gives no back pressure; for an air-cooled unit it would fall
-      at part load, which raises power (about +0.7 % at 12 kPa).
+      at part load. Power deviation at 75 % against back pressure: -1.97 %
+      at 14.55 kPa, -0.69 % at 12 kPa, +0.48 % at 10 kPa; a constant-UA
+      condenser gives 9.8 kPa and +0.60 %. The unknown back pressure
+      therefore dominates the power comparison.
   V12:
     item: Inconsistencies in the published 75 % THA data
     choice: >

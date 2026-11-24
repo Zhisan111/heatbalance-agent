@@ -184,11 +184,14 @@ seven-heater unit (inputs: main steam flow 189.80 kg/s and pressure
 
 - The cone law and the heater train predict pressures, reheat flow and
   feedwater temperature well.
-- The power criterion is not met. Likely causes: the model has no
-  governing stage (the main steam valves throttle from 13.25 to 12.3 MPa
-  without doing work, A18) and the back pressure at 75 % is unknown (12 kPa
-  instead of 14.55 kPa would add about 0.7 %). The test is kept as a strict
-  `xfail`, and a separate test pins the deviation.
+- The power criterion is not met, and the comparison cannot tell why. The
+  back pressure at 75 % is not published and dominates: -1.97 % at
+  14.55 kPa, -0.69 % at 12 kPa, +0.48 % at 10 kPa (+0.60 % with a
+  constant-UA condenser at 9.8 kPa). The missing governing stage (A18)
+  would add at most about 1.4 %. The paper's own model, also without a
+  governing stage but with a condenser model, matches the published power.
+  The test is kept as a strict `xfail`; separate tests pin the deviation
+  and show that it changes sign between 12 and 10 kPa.
 - The published cold reheat temperature at 75 % would need an HP
   efficiency of about 0.95 (0.844 at 100 %) and is excluded as
   inconsistent (V12). The published feedwater pressure at 75 % is given
@@ -375,10 +378,12 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
 
 - 预测得好：热再压力 +0.28 %，冷再压力 +0.35 %，再热流量 +0.08 %，给水
   温度 +0.98 K，都在计划限值内。
-- **功率偏差 −1.97 %，没有达到计划的 1 %。** 可能原因：模型没有调节级，
-  主汽阀从 13.25 节流到 12.3 MPa 不做功（A18）；75 % 工况背压未知，若为
-  12 kPa 可补回约 0.7 %。这个测试保留为 strict `xfail`，另有测试锁定偏差
-  范围。
+- **功率偏差 −1.97 %，没有达到计划的 1 %，而且这组数据分辨不出原因。**
+  75 % 工况背压没有公开，影响压倒性：14.55 kPa 时 −1.97 %，12 kPa 时
+  −0.69 %，10 kPa 时 +0.48 %（按 UA 不变的凝汽器算出 9.8 kPa，+0.60 %）。
+  没有调节级（A18）最多带来约 1.4 %。论文自己的模型也没有调节级，但带凝
+  汽器模型，功率对上了。这个测试保留为 strict `xfail`，另有测试锁定偏差，
+  并说明偏差在 12 到 10 kPa 之间变号。
 - 论文的 75 % 冷再温度 302.0 ℃ 需要高压缸效率约 0.95 才能达到（100 %
   时为 0.844），判为数据不自洽，不参与验收（V12）；75 % 给水压力在两张
   表里数值不同，也不用。
