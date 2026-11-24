@@ -129,3 +129,68 @@ def test_issue_serialisation():
     d = issue.to_dict()
     assert d["expected"] == [0.0, 1.0] and d["severity"] == "error"
     assert "loc" in str(issue) and "look here" in str(issue)
+
+
+# ---- off design ------------------------------------------------------------
+from checks.ranges import DEFAULT_LIMITS, check_sweep, limits_for_load  # noqa: E402
+
+
+def test_limits_at_rated_load_are_the_defaults():
+    assert limits_for_load(1.0) == DEFAULT_LIMITS
+    low = limits_for_load(0.4)
+    assert low["feedwater_T"][0] < DEFAULT_LIMITS["feedwater_T"][0]
+    assert low["heat_rate"][1] > DEFAULT_LIMITS["heat_rate"][1]
+
+
+def test_part_load_sweep_passes_the_checks(sweep):
+    assert check_sweep(sweep) == []
+    for s in sweep:
+        issues = check_ranges(s)
+        assert errors(issues) == [], [str(i) for i in issues]
+        # the only warning is the known HP2 section efficiency (design data)
+        assert {(i.check, i.location) for i in issues} == {
+            ("section_eta_typical", "HP2")
+        }
+
+
+def test_infeasible_pressure_is_an_error(params, state):
+    # 9 MPa is below the sliding pressure needed for 75 % load
+    nw = model.solve_offdesign(params, state, {"load": 0.75, "pressure": 9.0})
+    issues = check_ranges(model.summarize(nw))
+    hits = [i for i in errors(issues) if i.check == "throttle_pr"]
+    assert len(hits) == 1 and hits[0].value > 1
+
+
+def _part_load(sweep, load):
+    return copy.deepcopy(next(s for s in sweep if s["operation"]["load"] == pytest.approx(load)))
+
+
+OFF_DESIGN_FAULTS = [
+    (lambda s: s["operation"].update(throttle_pr=0.2), "throttle_pr",
+     "main steam valve", WARNING),
+    (lambda s: s["performance"].update(
+        exhaust_volume_flow=0.2 * s["operation"]["design_exhaust_volume_flow"]),
+     "exhaust_volume_ratio", "LP exhaust", WARNING),
+    (lambda s: _heater(s, "H3").update(p_shell=_heater(s, "DEA")["p_shell"] + 0.05),
+     "drain_to_deaerator_dp", "H3", WARNING),
+]
+
+
+@pytest.mark.parametrize("mutate, check, location, severity", OFF_DESIGN_FAULTS)
+def test_off_design_checks_detect_fault(sweep, mutate, check, location, severity):
+    faulty = _part_load(sweep, 0.5)
+    mutate(faulty)
+    hits = [
+        i for i in check_ranges(faulty)
+        if i.check == check and i.location == location
+    ]
+    assert len(hits) == 1 and hits[0].severity == severity
+
+
+def test_sweep_check_detects_inconsistent_trend(sweep):
+    faulty = copy.deepcopy(sweep)
+    faulty[3]["performance"]["heat_rate"] = faulty[2]["performance"]["heat_rate"] - 1
+    faulty[4]["extractions"][0]["p"] = faulty[3]["extractions"][0]["p"] * 1.01
+    found = {(i.check, i.location) for i in check_sweep(faulty)}
+    assert ("sweep_heat_rate", "load 0.75 -> 0.50") in found
+    assert ("sweep_extraction_pressure", "load 0.50 -> 0.40, extraction 1") in found
