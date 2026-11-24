@@ -18,20 +18,22 @@ reliably. The agent does not write equations from scratch: it derives new
 models from a **validated reference plant**, and an **automatic check layer**
 reports conservation and plausibility problems back to it.
 
-### Current stage: 1 of N - the reference plant
+### Current stage: 2 of N - reference plant with part-load operation
 
-This stage only lays the foundation:
-
-- `plants/sub300/` - design-point (THA) model of a typical 300 MW
-  subcritical, single-reheat unit with eight extractions (3 HP heaters,
-  deaerator, 4 LP heaters) and a turbine-driven feed pump, plus a
-  validation case of the same model code against published design data
+- `plants/sub300/` - model of a typical 300 MW subcritical, single-reheat
+  unit with eight extractions (3 HP heaters, deaerator, 4 LP heaters) and
+  a turbine-driven feed pump: design point (THA, stage 1) and steady-state
+  part load (stage 2), plus a validation case of the same model code
+  against published design data at 100 % and 75 % THA
+- `plants/sub300/handcalc.py` - independent classical heat balance
+  (design point and Flügel/Stodola part load) used as reference
 - `checks/balance.py` - mass and energy residuals of the system and of
   every component
 - `checks/ranges.py` - engineering plausibility ranges that return
-  structured issues (problem, location, value, expected range, hint)
+  structured issues (problem, location, value, expected range, hint);
+  limits shift with load, `check_sweep` checks trends over a load series
 
-Not in this stage: off-design operation, an MCP server, further plants, a UI.
+Not yet: dynamics, an MCP server, further plants, a UI.
 
 ### Run
 
@@ -58,6 +60,17 @@ summary = model.summarize(network)      # JSON-serialisable results
 
 check_balance(network)["issues"]        # [] when mass and energy are conserved
 check_ranges(summary)                   # list of Issue records
+
+# part load
+state = model.design_state(network)     # JSON-serialisable design reference
+part = model.solve_offdesign(params, state, {"load": 0.5})
+model.summarize(part)
+model.solve_offdesign(params, state, {
+    "main_steam_flow": 150.0,           # or "load" / "gross_power"
+    "pressure": "sliding",              # "curve" | "constant" | MPa
+    "condenser": {"cw_T_in": 25.0},     # or {"p": MPa}; default design p
+})
+model.load_sweep(params, loads=(1.0, 0.75, 0.5, 0.4))   # list of summaries
 ```
 
 Requires Python 3.11+. TESPy is pinned to 0.12.0.post1 and CoolProp to 8.0.0
@@ -128,6 +141,59 @@ How to read this:
 - Without leakages (and the last-section efficiency refitted) the heat rate
   is 0.38 % high and RH3 is missed by 17 %; a test keeps this comparison.
 
+### Part-load results (stage 2)
+
+Default operation: main steam pressure from the pressure curve (A22),
+throttle governing, design back pressure 4.9 kPa.
+
+| Load | Main steam | Turbine inlet / throttle ratio | Main steam flow | Hot reheat | Feedwater | Heat rate |
+|---|---|---|---|---|---|---|
+| 100 % | 16.70 MPa | 16.70 MPa / 1.00 | 908.7 t/h | 3.249 MPa | 274.8 degC | 7948.7 kJ/kWh |
+| 90 % | 15.33 MPa | 15.00 MPa / 0.98 | 811.7 t/h | 2.932 MPa | 268.2 degC | 8020.1 (+0.9 %) |
+| 75 % | 13.27 MPa | 12.49 MPa / 0.94 | 670.1 t/h | 2.458 MPa | 257.3 degC | 8152.2 (+2.6 %) |
+| 50 % | 9.85 MPa | 8.37 MPa / 0.85 | 443.4 t/h | 1.672 MPa | 234.8 degC | 8485.0 (+6.7 %) |
+| 40 % | 8.48 MPa | 6.74 MPa / 0.79 | 355.6 t/h | 1.357 MPa | 223.4 degC | 8693.3 (+9.4 %) |
+
+Pure sliding pressure gives 8455.2 kJ/kWh at 50 % (-0.4 % against the
+curve), constant pressure 8634.0 kJ/kWh (+1.8 %).
+
+How the part-load model is checked:
+
+- Re-solving 100 % load in off-design mode reproduces the design point
+  (heat rate to about 1e-9).
+- An independent Flügel/Stodola hand calculation (no TESPy) agrees with
+  the TESPy results to 1e-6 in six operating cases (curve, sliding,
+  constant and given pressure, cooling water model, fixed back pressure).
+  This proves the implementation, not the assumptions.
+- No public part-load heat rates of this unit class were found, so the
+  sub300 part-load numbers have no external reference. The validation case
+  below is the only external check.
+
+Validation against the published 75 % THA design point of the
+seven-heater unit (inputs: main steam flow 189.80 kg/s and pressure
+13.25 MPa; back pressure kept at the calibrated 14.55 kPa):
+
+| Quantity | Published | Model | Deviation | Planned limit |
+|---|---|---|---|---|
+| Hot reheat pressure | 2.471 MPa | 2.478 MPa | +0.28 % | 2 % |
+| Cold reheat pressure | 2.745 MPa | 2.754 MPa | +0.35 % | 2 % |
+| Reheat steam flow | 161.27 kg/s | 161.40 kg/s | +0.08 % | 2 % |
+| Feedwater temperature | 253.1 degC | 254.1 degC | +0.98 K | 3 K |
+| Gross power | 225.10 MW | 220.67 MW | **-1.97 %** | 1 % (not met) |
+| Cold reheat temperature | 302.0 degC | 327.7 degC | +25.7 K | excluded |
+
+- The cone law and the heater train predict pressures, reheat flow and
+  feedwater temperature well.
+- The power criterion is not met. Likely causes: the model has no
+  governing stage (the main steam valves throttle from 13.25 to 12.3 MPa
+  without doing work, A18) and the back pressure at 75 % is unknown (12 kPa
+  instead of 14.55 kPa would add about 0.7 %). The test is kept as a strict
+  `xfail`, and a separate test pins the deviation.
+- The published cold reheat temperature at 75 % would need an HP
+  efficiency of about 0.95 (0.844 at 100 %) and is excluded as
+  inconsistent (V12). The published feedwater pressure at 75 % is given
+  twice with different values and is not used either.
+
 ### Data sources and disclaimer
 
 **sub300 is a typical reference unit. It does not represent any real power
@@ -141,7 +207,7 @@ plant and must not be used as design or guarantee data.**
   through a search-engine excerpt; they are treated as typical values.
 - Every number in `plants/sub300/design_data.yaml` points to a public source
   (`references`, S1-S6) or to an explicit engineering assumption
-  (`assumptions`, A1-A16). A test enforces this, also for the validation
+  (`assumptions`, A1-A23). A test enforces this, also for the validation
   case.
 - Several assumptions are backed by the published unit of the validation
   case: reheat pressure loss 10 %, HP extraction line loss 3 %, terminal
@@ -161,6 +227,17 @@ Main assumptions (full list with rationale in `design_data.yaml`):
 | A17 | valve stem leakage 0.42 % to H3, HP-IP gland leakage 1.74 % to the IP inlet (fractions from the validation case, routing assumed) | +0.51 % against no leakage |
 | A11 | gland steam condenser, LP gland sealing steam, blowdown, make-up, spray neglected | not quantified |
 
+Part-load assumptions (A18-A23):
+
+| | Assumption | Comment |
+|---|---|---|
+| A18 | cone law per section, design efficiencies, no governing stage (throttle governing) | main cause of the -2 % power deviation at 75 % in the validation case |
+| A19 | mechanical loss constant in MW, generator efficiency constant | about 0.5 % on heat rate at 50 % load |
+| A20 | leakages by Martin's labyrinth formula, driven by main steam pressure | overstates the HP-IP gland leakage where the valves throttle |
+| A21 | heater terminal differences and water-side pressure drops constant, boiler and reheater loss ~ m^2 v | H1 has a negative TTD, so the lumped heater cannot be driven by UA |
+| A22 | pressure curve linear through 16.7 MPa at 100 % and the published 75 % point, constant below 40 % | only one public point; break point at 40 % assumed |
+| A23 | design back pressure by default, optional cooling water model with design UA and flow | |
+
 Known limitations:
 
 - With the design data the expansion line is fixed by the extraction
@@ -174,6 +251,12 @@ Known limitations:
 - Leakages are lumped into two flows at main steam enthalpy; real units
   have more leak-off points at lower enthalpy, and the routing used here is
   an assumption.
+- Part load: valid between about 40 and 100 % load. Below 40 % auxiliary
+  steam for the deaerator, high-pressure steam for the feed pump turbine,
+  HP drains to the condenser and last-stage ventilation are not modelled;
+  the checks warn where these become relevant.
+- No governing stage, no heater UA model, no exhaust loss curve (A18,
+  A21).
 
 ### License
 
@@ -189,18 +272,20 @@ MIT
 而是从**已验证的参考机组**派生，由**自动校核层**把守恒和合理性问题反馈
 给 agent。
 
-### 当前阶段：第 1 阶段——参考机组
-
-本阶段只做地基：
+### 当前阶段：第 2 阶段——参考机组加稳态变工况
 
 - `plants/sub300/`：典型亚临界 300 MW、一次再热、八级回热（3 高加 +
-  除氧器 + 4 低加）、汽动给水泵机组的设计工况（THA）模型，外加一个用
-  公开设计数据检验同一套模型代码的验证算例
+  除氧器 + 4 低加）、汽动给水泵机组的模型，包括设计工况（THA，第 1 阶
+  段）和稳态部分负荷（第 2 阶段），外加一个用公开设计数据（100 % 和
+  75 % THA）检验同一套模型代码的验证算例
+- `plants/sub300/handcalc.py`：独立的常规热平衡手算（设计工况和弗留格尔/
+  Stodola 变工况），作为对照
 - `checks/balance.py`：全系统及每个部件的质量、能量守恒残差
 - `checks/ranges.py`：工程合理范围检查，返回结构化问题清单（问题、位置、
-  实际值、期望范围、排查方向）
+  实际值、期望范围、排查方向）；限值随负荷调整，`check_sweep` 检查一组
+  负荷点的变化趋势
 
-本阶段不做：变工况、MCP 服务器、多台机组、界面。
+还没做：动态过程、MCP 服务器、多台机组、界面。
 
 ### 如何运行
 
@@ -217,7 +302,9 @@ pytest
 ```
 
 Python 接口见上方英文部分的示例：`load_params` → `build_model` → `solve`
-→ `summarize`，再交给 `check_balance` 和 `check_ranges`。
+→ `summarize`，再交给 `check_balance` 和 `check_ranges`。变工况：
+`design_state` 保存设计工况，`solve_offdesign(params, state, conditions)`
+算单个工况，`load_sweep` 算一组负荷。
 
 需要 Python 3.11+。TESPy 锁定 0.12.0.post1，CoolProp 锁定 8.0.0（TESPy
 各小版本之间接口变化较大）。
@@ -268,6 +355,34 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
 - 不建漏汽（并重新标定末级段效率）时，热耗率偏高 0.38 %，RH3 抽汽量偏
   差 17 %；有一个测试保留了这组对比。
 
+### 部分负荷结果（第 2 阶段）
+
+默认运行方式：主汽压力按压力曲线（A22），节流调节，背压保持设计值
+4.9 kPa。各负荷点的数值见上方英文表格，热耗率：90 % +0.9 %，75 %
++2.6 %，50 % +6.7 %，40 % +9.4 %。50 % 负荷时纯滑压比曲线低 0.4 %，
+定压高 1.8 %。
+
+变工况模型的检验：
+
+- 用变工况模式重算 100 % 负荷，与设计工况一致（热耗率差约 1e-9）。
+- 独立的弗留格尔/Stodola 手算（不用 TESPy）与 TESPy 结果在 6 个工况下吻
+  合到 1e-6。这证明实现正确，不证明假设正确。
+- 没有找到这类机组的公开部分负荷热耗率，sub300 的部分负荷数值没有外部
+  参照，唯一的外部检验是下面的验证算例。
+
+用 7 级回热机组的公开 75 % THA 设计值验证（输入主汽流量 189.80 kg/s、
+压力 13.25 MPa，背压沿用标定的 14.55 kPa）：
+
+- 预测得好：热再压力 +0.28 %，冷再压力 +0.35 %，再热流量 +0.08 %，给水
+  温度 +0.98 K，都在计划限值内。
+- **功率偏差 −1.97 %，没有达到计划的 1 %。** 可能原因：模型没有调节级，
+  主汽阀从 13.25 节流到 12.3 MPa 不做功（A18）；75 % 工况背压未知，若为
+  12 kPa 可补回约 0.7 %。这个测试保留为 strict `xfail`，另有测试锁定偏差
+  范围。
+- 论文的 75 % 冷再温度 302.0 ℃ 需要高压缸效率约 0.95 才能达到（100 %
+  时为 0.844），判为数据不自洽，不参与验收（V12）；75 % 给水压力在两张
+  表里数值不同，也不用。
+
 ### 数据来源与免责声明
 
 **sub300 是典型参考机组，不对应任何一台真实电厂，不能当作设计值或保证值
@@ -278,7 +393,7 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
   用 N300-16.7/538/538 参数表的课程设计文档），且只读到了搜索引擎摘要，
   因此按典型值处理。
 - `plants/sub300/design_data.yaml` 里每个数值都指向公开来源（`references`，
-  S1–S6）或明确的工程假设（`assumptions`，A1–A16），有测试强制检查，验
+  S1–S6）或明确的工程假设（`assumptions`，A1–A23），有测试强制检查，验
   证算例的数据文件同样检查。
 - 验证算例的公开机组印证了几条假设：再热压损 10 %、高加抽汽管压损 3 %、
   端差 0 / 2.8 K 和 5.6 K，漏汽份额也取自它。
@@ -297,6 +412,10 @@ CoolProp），不是公开发表的设计数据。两者吻合说明 TESPy 模�
 - 漏汽合并成两股、按主汽焓处理（假设 A17：0.42 % 去 H3，1.74 % 去中压
   缸进口，使热耗率比不计漏汽高 0.51 %）。真实机组的漏汽点更多、焓更低，
   这里的去向是假设。
+- 部分负荷适用范围约 40–100 %。40 % 以下的辅汽供除氧器、小汽机切高压汽
+  源、高加疏水改走凝汽器、末级鼓风都没有建模，检查项会在相关时报警。
+- 没有调节级、加热器没有 UA 模型、没有排汽损失曲线（A18、A21）。变工况
+  假设 A18–A23 见上方英文表格。
 
 ### 许可
 
