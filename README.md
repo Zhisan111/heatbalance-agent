@@ -18,7 +18,10 @@ reliably. The agent does not write equations from scratch: it derives new
 models from a **validated reference plant**, and an **automatic check layer**
 reports conservation and plausibility problems back to it.
 
-### Current stage: 2 of N - reference plant with part-load operation
+### Current stage: 3 of N - MCP server
+
+Stage 3 makes the models usable by an AI agent through MCP (see
+[MCP server](#mcp-server)). Stages 1 and 2 provide what it exposes:
 
 - `plants/sub300/` - model of a typical 300 MW subcritical, single-reheat
   unit with eight extractions (3 HP heaters, deaerator, 4 LP heaters) and
@@ -33,7 +36,12 @@ reports conservation and plausibility problems back to it.
   structured issues (problem, location, value, expected range, hint);
   limits shift with load, `check_sweep` checks trends over a load series
 
-Not yet: dynamics, an MCP server, further plants, a UI.
+- `heatbalance_mcp/` - MCP server: derive models from the reference plants
+  by patches with reasons, solve design and part load, every result comes
+  with conservation and plausibility issues
+- `checks/inputs.py` - input plausibility checks that run before solving
+
+Not yet: dynamics, HTTP transport, further plants, a governing stage, a UI.
 
 ### Run
 
@@ -75,6 +83,65 @@ model.load_sweep(params, loads=(1.0, 0.75, 0.5, 0.4))   # list of summaries
 
 Requires Python 3.11+. TESPy is pinned to 0.12.0.post1 and CoolProp to 8.0.0
 because TESPy's API changes between minor releases.
+
+### MCP server
+
+```bash
+pip install -e .
+```
+
+```bash
+heatbalance-mcp
+```
+
+The server speaks MCP over stdio. Claude Code:
+
+```bash
+claude mcp add heatbalance -- heatbalance-mcp
+```
+
+Claude Desktop (`claude_desktop_config.json`; use the absolute path of
+`heatbalance-mcp` if it is not on the PATH of the app):
+
+```json
+{"mcpServers": {"heatbalance": {"command": "heatbalance-mcp"}}}
+```
+
+Tools:
+
+| Tool | Purpose |
+|---|---|
+| `list_reference_plants`, `list_models` | what can be derived from, what exists in the session |
+| `get_plant_data` | parameters with sources and assumptions, patch log |
+| `derive_model` | new model = base + patches, each with a reason; rejected with input issues if implausible |
+| `solve_design`, `solve_offdesign`, `load_sweep` | results plus errors and warnings (location, value, expected range, hint) |
+| `get_results`, `compare` | detailed results on demand, side-by-side comparison |
+| `export_model` | YAML of the derived model; patches appear as assumptions P1, P2, ... |
+
+Patch example:
+
+```json
+{"base": "sub300", "name": "summer",
+ "patches": [
+   {"path": "condenser.p", "value": 0.0065, "reason": "summer cooling water"},
+   {"path": "turbine.sections[LP5].eta_s", "value": 0.78, "reason": "last stage retrofit"}]}
+```
+
+Design decisions:
+
+- The server keeps models in memory per session; `export_model` is the way
+  to keep one.
+- Patches are applied to the data document, not to code. Paths select list
+  items by label; unknown paths, missing reasons and wrong types are
+  rejected.
+- Input checks run before solving (units, efficiencies, implied section
+  efficiencies, pressure order, pumps, leakages), so a typo such as 4.9
+  instead of 0.0049 MPa returns a precise error instead of a solver
+  failure.
+- Results are compact by default (performance, operation, extractions,
+  issues); `get_results` returns details such as all states.
+- Reference plants cannot be modified; derived models can be derived
+  further, the patch numbering continues.
 
 ### Design-point results
 
@@ -275,7 +342,10 @@ MIT
 而是从**已验证的参考机组**派生，由**自动校核层**把守恒和合理性问题反馈
 给 agent。
 
-### 当前阶段：第 2 阶段——参考机组加稳态变工况
+### 当前阶段：第 3 阶段——MCP 服务器
+
+第 3 阶段让 AI agent 能通过 MCP 使用这些模型（用法见上方英文部分的
+[MCP server](#mcp-server)）。它对外提供的是第 1、2 阶段的成果：
 
 - `plants/sub300/`：典型亚临界 300 MW、一次再热、八级回热（3 高加 +
   除氧器 + 4 低加）、汽动给水泵机组的模型，包括设计工况（THA，第 1 阶
@@ -288,7 +358,11 @@ MIT
   实际值、期望范围、排查方向）；限值随负荷调整，`check_sweep` 检查一组
   负荷点的变化趋势
 
-还没做：动态过程、MCP 服务器、多台机组、界面。
+- `heatbalance_mcp/`：MCP 服务器。从参考机组打补丁派生模型（每条补丁必
+  须写理由），求解设计工况和部分负荷，每个结果都附带守恒和合理性问题清单
+- `checks/inputs.py`：求解前的输入合理性检查
+
+还没做：动态过程、HTTP 传输、多台机组、调节级、界面。
 
 ### 如何运行
 
@@ -310,7 +384,21 @@ Python 接口见上方英文部分的示例：`load_params` → `build_model` �
 算单个工况，`load_sweep` 算一组负荷。
 
 需要 Python 3.11+。TESPy 锁定 0.12.0.post1，CoolProp 锁定 8.0.0（TESPy
-各小版本之间接口变化较大）。
+各小版本之间接口变化较大），MCP SDK 锁定 2.3.0。
+
+MCP 服务器：`pip install -e .` 后运行 `heatbalance-mcp`（stdio）。Claude
+Code 里用 `claude mcp add heatbalance -- heatbalance-mcp` 注册，Claude
+Desktop 的配置见英文部分。设计要点：
+
+- 模型保存在服务器内存里，按会话存在；要留存用 `export_model` 导出 YAML，
+  补丁会作为假设 P1、P2…… 写进去，带理由。
+- 补丁改的是数据文件，不是代码。路径按标签选列表项；未知路径、缺理由、
+  类型不对都会被拒绝。
+- 求解前先做输入检查（单位、效率、由焓推出的段效率、压力顺序、泵、漏汽），
+  把 0.0049 写成 4.9 这类错误会直接得到明确的报错，而不是求解器不收敛。
+- 默认返回精简结果（性能、运行参数、抽汽、问题清单），详细数据用
+  `get_results` 取。
+- 参考机组不能被修改；派生模型可以继续派生，补丁编号接着往下排。
 
 ### 设计工况结果
 

@@ -159,7 +159,9 @@ def compare(
 
 def main() -> None:
     # keep TESPy's solver progress out of the host's server log
-    logging.getLogger("tespy").setLevel(logging.WARNING)
+    from tespy.tools.logger import TESPY_LOGGER_ID
+
+    logging.getLogger(TESPY_LOGGER_ID).setLevel(logging.WARNING)
     server.run("stdio")
 
 
