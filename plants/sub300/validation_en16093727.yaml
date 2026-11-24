@@ -101,6 +101,28 @@ assumptions:
       extraction flow is otherwise missed by 17 %; the IP inlet is chosen
       because sending 4.54 kg/s to the condenser would require a
       last-section efficiency of 0.96 to meet the published power.
+  V11:
+    item: Part-load (75 % THA) validation conditions
+    choice: >
+      Inputs from Table 1 (75 % THA): main steam flow 189.80 kg/s, main
+      steam pressure 13.25 MPa, main and reheat temperature 538 degC.
+      Back pressure kept at the calibrated 14.55 kPa (not published). The
+      off-design method of sub300 applies unchanged (A18-A21: cone law with
+      design efficiencies, throttle governing, constant terminal
+      differences, Martin leakage, constant mechanical loss and generator
+      efficiency). Everything else is predicted.
+    rationale: >
+      The paper gives no back pressure; for an air-cooled unit it would fall
+      at part load, which raises power (about +0.7 % at 12 kPa).
+  V12:
+    item: Inconsistencies in the published 75 % THA data
+    choice: >
+      Not used for acceptance: cold reheat temperature 302.0 degC (it would
+      need an HP isentropic efficiency of about 0.95 from 13.25 MPa against
+      0.844 at 100 % THA, a test recomputes this); feedwater pressure
+      (16.770 MPa in Table 1, 13.350 MPa in Table 5). Power: Table 1
+      (225.100 MW) is used, Table 5 gives 225.118 MW.
+    rationale: Values that contradict the rest of the data set cannot discriminate between models.
 
 parameters:
   rating:
@@ -189,3 +211,22 @@ tolerances:
   # enthalpy rise (the published 16.8 MPa discharge pressure is low)
   extraction_flow_rh3: {value: 0.05, unit: "-", ref: V10}
   reheat_steam_flow: {value: 0.005, unit: "-", ref: V10}
+
+# Published design values at 75 % THA (Table 1) and acceptance limits of
+# the part-load validation.
+published_75:
+  gross_power: {value: 225.100, unit: MW, ref: S6}
+  main_steam_flow: {value: 189.80, unit: kg/s, ref: S6}
+  main_steam_p: {value: 13.25, unit: MPa, ref: S6}
+  hot_reheat_p: {value: 2.471, unit: MPa, ref: S6}
+  reheat_steam_flow: {value: 161.27, unit: kg/s, ref: S6}
+  cold_reheat_p: {value: 2.745, unit: MPa, ref: S6}
+  cold_reheat_T: {value: 302.0, unit: degC, ref: [S6, V12]}
+  feedwater_T: {value: 253.1, unit: degC, ref: S6}
+
+tolerances_75:
+  hot_reheat_p: {value: 0.02, unit: "-", ref: V11}
+  reheat_steam_flow: {value: 0.02, unit: "-", ref: V11}
+  cold_reheat_p: {value: 0.02, unit: "-", ref: V11}
+  feedwater_T: {value: 3.0, unit: K, ref: V11}
+  gross_power: {value: 0.01, unit: "-", ref: V11}

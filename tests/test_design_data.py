@@ -9,7 +9,9 @@ from plants.sub300 import model
 
 FILES = {
     "design_data.yaml": ["parameters", "calibration", "plausibility"],
-    "validation_en16093727.yaml": ["parameters", "published", "tolerances"],
+    "validation_en16093727.yaml": [
+        "parameters", "published", "tolerances", "published_75", "tolerances_75",
+    ],
 }
 BLOCKS = [(name, block) for name, blocks in FILES.items() for block in blocks]
 

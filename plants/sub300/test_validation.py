@@ -24,7 +24,7 @@ from checks.balance import check_balance
 from checks.issues import errors, warnings
 from checks.ranges import check_ranges
 from plants.sub300 import model
-from plants.sub300.handcalc import hand_calc
+from plants.sub300.handcalc import hand_calc, hand_calc_offdesign
 
 CASE = Path(model.__file__).with_name("validation_en16093727.yaml")
 
@@ -226,3 +226,86 @@ def test_effect_of_neglecting_leakages(case_params, published):
     table = {h["label"]: h["m"] for h in published["heaters"]}
     rh3 = result["extraction_fractions"]["RH3"] * published["main_steam_flow"]
     assert rh3 / table["RH3"] - 1 > 0.10
+
+
+# ---- part load: 75 % THA ---------------------------------------------------
+@pytest.fixture(scope="module")
+def pub75(case):
+    return model._strip(case["published_75"])
+
+
+@pytest.fixture(scope="module")
+def tol75(case):
+    return model._strip(case["tolerances_75"])
+
+
+@pytest.fixture(scope="module")
+def conditions75(pub75):
+    return {"main_steam_flow": pub75["main_steam_flow"],
+            "pressure": pub75["main_steam_p"]}
+
+
+@pytest.fixture(scope="module")
+def result75(result, case_params, conditions75):
+    state = model.design_state(result[0])
+    network = model.solve_offdesign(case_params, state, conditions75)
+    return network, model.summarize(network)
+
+
+def test_part_load_predictions(result75, pub75, tol75):
+    """Cone law and heater train predict pressures, flows and feedwater."""
+    summary = result75[1]
+    turb, perf = summary["turbine"], summary["performance"]
+    assert turb["hot_reheat"]["p"] == pytest.approx(
+        pub75["hot_reheat_p"], rel=tol75["hot_reheat_p"]
+    )
+    assert turb["cold_reheat"]["p"] == pytest.approx(
+        pub75["cold_reheat_p"], rel=tol75["cold_reheat_p"]
+    )
+    assert perf["reheat_steam_flow"] == pytest.approx(
+        pub75["reheat_steam_flow"], rel=tol75["reheat_steam_flow"]
+    )
+    assert perf["feedwater_T"] == pytest.approx(
+        pub75["feedwater_T"], abs=tol75["feedwater_T"]
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Planned 1 % power criterion is not met (-2.0 %): no governing "
+    "stage (throttle governing, A18) and unknown back pressure (V11).",
+)
+def test_part_load_power_within_planned_tolerance(result75, pub75, tol75):
+    assert result75[1]["performance"]["gross_power"] == pytest.approx(
+        pub75["gross_power"], rel=tol75["gross_power"]
+    )
+
+
+def test_part_load_power_deviation_is_as_documented(result75, pub75):
+    deviation = result75[1]["performance"]["gross_power"] / pub75["gross_power"] - 1
+    assert -0.025 < deviation < -0.015
+
+
+def test_published_cold_reheat_temperature_is_inconsistent(case_params, pub75, result):
+    """The published 75 % HP exhaust state needs an HP efficiency of ~0.95."""
+    h_in = _h(pub75["main_steam_p"], case_params["main_steam"]["T"])
+    s_in = PropsSI("S", "P", pub75["main_steam_p"] * 1e6, "H", h_in * 1e3, "water")
+    h_s = PropsSI("H", "P", pub75["cold_reheat_p"] * 1e6, "S", s_in, "water") / 1e3
+    h_out = _h(pub75["cold_reheat_p"], pub75["cold_reheat_T"])
+    eta_needed = (h_in - h_out) / (h_in - h_s)
+    eta_design = result[1]["turbine"]["cylinders"]["HP"]["eta_s"]
+    assert eta_needed > 0.93 and eta_design < 0.85
+
+
+def test_part_load_checks_and_hand_calculation(result75, case_params, conditions75):
+    network, summary = result75
+    assert check_balance(network)["issues"] == []
+    issues = check_ranges(summary)
+    assert errors(issues) == [], "\n".join(map(str, errors(issues)))
+    ref = hand_calc_offdesign(case_params, conditions75)
+    perf = summary["performance"]
+    assert perf["gross_power"] == pytest.approx(ref["gross_power"], rel=1e-6)
+    assert perf["heat_rate"] == pytest.approx(ref["heat_rate"], rel=1e-6)
+    assert summary["turbine"]["hot_reheat"]["p"] == pytest.approx(
+        ref["hot_reheat_p"], rel=1e-6
+    )

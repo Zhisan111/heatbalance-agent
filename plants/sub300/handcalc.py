@@ -343,7 +343,7 @@ def _curve_pressure(params, load):
 
 
 def hand_calc_offdesign(
-    params: dict, conditions: dict | None = None, tol: float = 1e-11,
+    params: dict, conditions: dict | None = None, tol: float = 1e-10,
     max_iter: int = 500,
 ) -> dict:
     """Part-load heat balance by the classical Flügel/Stodola iteration.
