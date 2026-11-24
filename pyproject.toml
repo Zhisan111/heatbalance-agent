@@ -16,16 +16,21 @@ dependencies = [
     # property data source of the calibrated reference plant
     "CoolProp==8.0.0",
     "PyYAML>=6.0",
+    # MCP SDK 2.x API (MCPServer, Client); pinned like TESPy
+    "mcp==2.3.0",
 ]
+
+[project.scripts]
+heatbalance-mcp = "heatbalance_mcp.server:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
-include = ["plants*", "checks*"]
+include = ["plants*", "checks*", "heatbalance_mcp*"]
 
 [tool.setuptools.package-data]
-"plants.sub300" = ["design_data.yaml"]
+"plants.sub300" = ["design_data.yaml", "validation_en16093727.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "plants"]
